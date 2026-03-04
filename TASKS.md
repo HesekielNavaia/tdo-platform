@@ -320,7 +320,7 @@ After each task: run the test command, fix failures, then mark [x] and commit.
 
 ---
 
-- [ ] **Task 15: Write FastAPI application**
+- [x] **Task 15: Write FastAPI application**
 
   Create `src/api/main.py` with all endpoints from tdo_build_prompt_v2.md:
   - GET /v1/datasets

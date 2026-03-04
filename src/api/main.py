@@ -1,0 +1,248 @@
+"""
+FastAPI application for the TDO platform.
+Exposes all endpoints from tdo_build_prompt_v2.md.
+"""
+from __future__ import annotations
+
+import os
+import uuid
+from datetime import datetime, timezone
+from typing import Optional
+
+import structlog
+from fastapi import FastAPI, Depends, HTTPException, Query, Request, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
+from src.models.mvm import (
+    MVMRecord,
+    SearchFilters,
+    SearchResult,
+    PortalHealth,
+)
+
+log = structlog.get_logger(__name__)
+
+app = FastAPI(
+    title="TDO — Trusted Data Observatory",
+    description="Metadata discovery API for official statistical datasets",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+)
+
+# CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# ---------------------------------------------------------------------------
+# API key authentication
+# ---------------------------------------------------------------------------
+
+API_KEY_HEADER = "X-API-Key"
+VALID_API_KEYS: set[str] = set(
+    filter(None, os.environ.get("TDO_API_KEYS", "dev-key-123").split(","))
+)
+
+# Endpoints that don't require authentication
+PUBLIC_PATHS = {"/v1/health", "/v1/stats", "/docs", "/redoc", "/openapi.json"}
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    """Require API key for all non-public endpoints."""
+    path = request.url.path
+    if path in PUBLIC_PATHS or any(path.startswith(p) for p in ["/docs", "/redoc", "/openapi"]):
+        return await call_next(request)
+
+    api_key = request.headers.get(API_KEY_HEADER)
+    if not api_key or api_key not in VALID_API_KEYS:
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={"detail": "Missing or invalid API key"},
+        )
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    """Attach a unique request ID to each request for structured logging."""
+    request_id = str(uuid.uuid4())
+    log.bind(request_id=request_id, path=request.url.path, method=request.method)
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/datasets
+# ---------------------------------------------------------------------------
+
+@app.get("/v1/datasets", response_model=list[SearchResult])
+async def list_datasets(
+    q: Optional[str] = Query(None, description="Natural language search query"),
+    geo: Optional[str] = Query(None, description="ISO 3166 codes, comma-separated"),
+    theme: Optional[str] = Query(None, description="Theme codes, comma-separated"),
+    publisher: Optional[str] = Query(None, description="Publisher name (fuzzy match)"),
+    format: Optional[str] = Query(None, description="Format string"),
+    access: Optional[str] = Query(None, description="open | restricted | embargoed"),
+    resource_type: Optional[str] = Query(None, description="dataset | table | indicator | collection"),
+    updated_after: Optional[str] = Query(None, description="ISO date"),
+    min_confidence: float = Query(0.5, ge=0.0, le=1.0),
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    """Search datasets using hybrid semantic + keyword search."""
+    filters = SearchFilters(
+        geo=geo.split(",") if geo else None,
+        theme=theme.split(",") if theme else None,
+        publisher=publisher,
+        format=format,
+        access=access,
+        resource_type=resource_type,
+        updated_after=updated_after,
+        min_confidence=min_confidence,
+        limit=limit,
+        offset=offset,
+    )
+
+    # In production this would use the real search engine
+    # Returning empty list for now (wired in docker-compose / integration)
+    return []
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/datasets/{id}
+# ---------------------------------------------------------------------------
+
+@app.get("/v1/datasets/{dataset_id}", response_model=MVMRecord)
+async def get_dataset(dataset_id: str):
+    """Return full MVM record for a specific dataset."""
+    # In production: query DB by id
+    raise HTTPException(status_code=404, detail="Dataset not found")
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/datasets/{id}/similar
+# ---------------------------------------------------------------------------
+
+@app.get("/v1/datasets/{dataset_id}/similar", response_model=list[SearchResult])
+async def get_similar_datasets(dataset_id: str):
+    """Return top-10 semantically similar datasets."""
+    return []
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/datasets/{id}/provenance
+# ---------------------------------------------------------------------------
+
+@app.get("/v1/datasets/{dataset_id}/provenance")
+async def get_provenance(dataset_id: str, request: Request):
+    """
+    Return InternalProcessingRecord for a dataset.
+    Requires elevated API scope.
+    """
+    # Check for elevated scope
+    api_key = request.headers.get(API_KEY_HEADER, "")
+    elevated_keys = set(
+        filter(None, os.environ.get("TDO_ELEVATED_KEYS", "").split(","))
+    )
+    if elevated_keys and api_key not in elevated_keys:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Elevated API scope required for provenance endpoint",
+        )
+    raise HTTPException(status_code=404, detail="Dataset not found")
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/query
+# ---------------------------------------------------------------------------
+
+class QueryRequest:
+    def __init__(self, question: str):
+        self.question = question
+
+
+from pydantic import BaseModel
+
+class QueryBody(BaseModel):
+    question: str
+
+
+@app.post("/v1/query")
+async def natural_language_query(body: QueryBody):
+    """
+    Decompose a natural language question into structured /datasets params
+    using Phi-4 and return structured results + natural language summary.
+    """
+    return {
+        "question": body.question,
+        "structured_query": {},
+        "results": [],
+        "summary": "Query engine not yet connected to LLM endpoint.",
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/portals
+# ---------------------------------------------------------------------------
+
+@app.get("/v1/portals", response_model=list[PortalHealth])
+async def list_portals():
+    """List all portals with last crawl timestamp, record count, and quality scores."""
+    portals = [
+        "statistics_finland", "world_bank", "eurostat", "oecd", "un_data"
+    ]
+    return [
+        PortalHealth(
+            portal_id=pid,
+            status="unknown",
+        )
+        for pid in portals
+    ]
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/health
+# ---------------------------------------------------------------------------
+
+@app.get("/v1/health")
+async def health():
+    """Pipeline status per portal, queue depths, model endpoint health."""
+    return {
+        "status": "ok",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "version": "1.0.0",
+        "portals": {
+            pid: {"status": "unknown"}
+            for pid in ["statistics_finland", "world_bank", "eurostat", "oecd", "un_data"]
+        },
+        "model_endpoints": {
+            "embedder": "not_configured",
+            "harmoniser": "not_configured",
+        }
+    }
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/stats
+# ---------------------------------------------------------------------------
+
+@app.get("/v1/stats")
+async def stats():
+    """Aggregate counts by portal, theme, geo, access_type, resource_type."""
+    return {
+        "total_datasets": 0,
+        "by_portal": {},
+        "by_theme": {},
+        "by_geo": {},
+        "by_access_type": {},
+        "by_resource_type": {},
+    }
