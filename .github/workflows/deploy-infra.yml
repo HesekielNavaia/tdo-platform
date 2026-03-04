@@ -23,11 +23,12 @@ permissions:
   contents: read
 
 env:
-  AZURE_SUBSCRIPTION_ID: '2984fe6f-916e-4ab1-ba5d-c34cdf8f9dd8'
+  AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
   AZURE_RESOURCE_GROUP: 'tdo-platform-dev'
   AZURE_LOCATION: 'northeurope'
-  AZURE_CLIENT_ID: '95e0befa-a09a-43ea-acc9-8294ea2bf104'
-  AZURE_TENANT_ID: 'e078eae9-f34e-495c-b095-7e1648269606'
+  AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+  AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+  ADMIN_OBJECT_ID: ${{ secrets.ADMIN_OBJECT_ID }}
 
 jobs:
   lint:
@@ -60,7 +61,7 @@ jobs:
             --template-file infra/main.bicep \
             --parameters infra/parameters/dev.bicepparam \
             --parameters tenantId=${{ env.AZURE_TENANT_ID }} \
-            --parameters administratorObjectId=${{ secrets.ADMIN_OBJECT_ID }}
+            --parameters administratorObjectId=${{ env.ADMIN_OBJECT_ID }}
 
   deploy-dev:
     name: Deploy to Dev
@@ -83,7 +84,7 @@ jobs:
             --template-file infra/main.bicep \
             --parameters infra/parameters/dev.bicepparam \
             --parameters tenantId=${{ env.AZURE_TENANT_ID }} \
-            --parameters administratorObjectId=${{ secrets.ADMIN_OBJECT_ID }} \
+            --parameters administratorObjectId=${{ env.ADMIN_OBJECT_ID }} \
             --parameters environment=dev
 
   deploy-staging:
@@ -107,14 +108,14 @@ jobs:
             --template-file infra/main.bicep \
             --parameters infra/parameters/dev.bicepparam \
             --parameters tenantId=${{ env.AZURE_TENANT_ID }} \
-            --parameters administratorObjectId=${{ secrets.ADMIN_OBJECT_ID }} \
+            --parameters administratorObjectId=${{ env.ADMIN_OBJECT_ID }} \
             --parameters environment=staging
 
   deploy-prod:
     name: Deploy to Production
-    needs: [deploy-staging]
+    needs: what-if
     runs-on: ubuntu-latest
-    environment: prod  # requires manual approval
+    environment: prod  # requires manual approval in GitHub environment settings
     if: github.event.inputs.environment == 'prod'
     steps:
       - uses: actions/checkout@v4
@@ -131,5 +132,5 @@ jobs:
             --template-file infra/main.bicep \
             --parameters infra/parameters/dev.bicepparam \
             --parameters tenantId=${{ env.AZURE_TENANT_ID }} \
-            --parameters administratorObjectId=${{ secrets.ADMIN_OBJECT_ID }} \
+            --parameters administratorObjectId=${{ env.ADMIN_OBJECT_ID }} \
             --parameters environment=prod
