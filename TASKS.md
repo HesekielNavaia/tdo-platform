@@ -193,7 +193,7 @@ After each task: run the test command, fix failures, then mark [x] and commit.
 
 ---
 
-- [ ] **Task 8: Write World Bank adapter**
+- [x] **Task 8: Write World Bank adapter**
 
   Create `src/adapters/world_bank.py`
   Portal: World Bank REST JSON
