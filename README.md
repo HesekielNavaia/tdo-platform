@@ -154,7 +154,11 @@ asyncio.run(harvest_portal('statistics_finland', 'local-run-001'))
    az ad app create --display-name tdo-github-oidc
    # Follow: https://docs.github.com/en/actions/security-guides/configuring-openid-connect-in-azure
    ```
-3. Set GitHub Actions secrets:
+3. Set GitHub Actions secrets (`Settings → Secrets and variables → Actions → Secrets`):
+   - `ADMIN_OBJECT_ID` — object ID of the AAD user/group granted Key Vault admin access
+   - `ANTHROPIC_API_KEY` — API key for the self-healing workflow (`self-heal.yml`); obtain from [console.anthropic.com](https://console.anthropic.com)
+
+4. Set GitHub Actions variables (`Settings → Secrets and variables → Actions → Variables`):
    - `AZURE_CLIENT_ID`
    - `AZURE_TENANT_ID`
    - `AZURE_SUBSCRIPTION_ID`

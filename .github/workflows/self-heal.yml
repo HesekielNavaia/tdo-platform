@@ -1,0 +1,165 @@
+name: Self-Heal
+
+on:
+  workflow_run:
+    workflows:
+      - Deploy Infrastructure
+      - Deploy Application
+    types:
+      - completed
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  self-heal:
+    name: Fix failed workflow with Claude
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'failure'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 2
+
+      # Guard: skip if the last commit was already a self-heal attempt to
+      # prevent infinite retry loops.
+      - name: Check for self-heal loop
+        id: guard
+        run: |
+          LAST_AUTHOR=$(git log -1 --format='%an')
+          if [[ "$LAST_AUTHOR" == "self-heal[bot]" ]]; then
+            echo "Last commit was already a self-heal attempt — stopping." >&2
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Map workflow display name → file path
+      - name: Identify failed workflow file
+        if: steps.guard.outputs.skip == 'false'
+        id: info
+        run: |
+          case "${{ github.event.workflow_run.name }}" in
+            "Deploy Infrastructure") FILE=".github/workflows/deploy-infra.yml" ;;
+            "Deploy Application")    FILE=".github/workflows/deploy-app.yml"   ;;
+            *)
+              echo "Unrecognised workflow: ${{ github.event.workflow_run.name }}" >&2
+              exit 1
+              ;;
+          esac
+          echo "workflow_file=$FILE" >> "$GITHUB_OUTPUT"
+          echo "run_id=${{ github.event.workflow_run.id }}" >> "$GITHUB_OUTPUT"
+
+      # Fetch the failed job logs (capped at 12 KB to stay within API limits)
+      - name: Fetch failure logs
+        if: steps.guard.outputs.skip == 'false'
+        id: logs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run view "${{ steps.info.outputs.run_id }}" --log-failed 2>&1 \
+            | head -c 12000 > failure_logs.txt
+          echo "--- failure_logs.txt ---"
+          cat failure_logs.txt
+
+      # Call the Anthropic API; use Python to build the JSON payload safely
+      # so that arbitrary log content cannot break the shell command.
+      - name: Call Claude to generate fix
+        if: steps.guard.outputs.skip == 'false'
+        id: claude
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          WORKFLOW_FILE: ${{ steps.info.outputs.workflow_file }}
+        run: |
+          python3 << 'PYEOF'
+          import json
+          import os
+          import sys
+          import urllib.error
+          import urllib.request
+
+          api_key       = os.environ["ANTHROPIC_API_KEY"]
+          workflow_file = os.environ["WORKFLOW_FILE"]
+
+          with open(workflow_file) as f:
+              workflow_content = f.read()
+
+          with open("failure_logs.txt") as f:
+              logs = f.read()
+
+          prompt = (
+              f"A GitHub Actions workflow file failed during a deployment. "
+              f"Your task is to fix it.\n\n"
+              f"## Failed workflow file: {workflow_file}\n\n"
+              f"```yaml\n{workflow_content}\n```\n\n"
+              f"## Error log from the failed run\n\n"
+              f"```\n{logs}\n```\n\n"
+              f"Output ONLY the corrected YAML file contents. "
+              f"No explanation, no preamble, no markdown code fences."
+          )
+
+          payload = json.dumps({
+              "model": "claude-sonnet-4-6",
+              "max_tokens": 4096,
+              "messages": [{"role": "user", "content": prompt}],
+          }).encode()
+
+          req = urllib.request.Request(
+              "https://api.anthropic.com/v1/messages",
+              data=payload,
+              headers={
+                  "x-api-key": api_key,
+                  "anthropic-version": "2023-06-01",
+                  "content-type": "application/json",
+              },
+          )
+
+          try:
+              with urllib.request.urlopen(req) as resp:
+                  data = json.loads(resp.read())
+          except urllib.error.HTTPError as e:
+              print(f"Anthropic API error {e.code}: {e.read().decode()}", file=sys.stderr)
+              sys.exit(1)
+
+          fixed = data["content"][0]["text"].strip()
+
+          # Strip accidental markdown code fences if Claude added them anyway
+          lines = fixed.splitlines()
+          if lines and lines[0].startswith("```"):
+              lines = lines[1:]
+          if lines and lines[-1].strip().startswith("```"):
+              lines = lines[:-1]
+
+          with open(workflow_file, "w") as f:
+              f.write("\n".join(lines) + "\n")
+
+          print(f"Wrote fix to {workflow_file}")
+          PYEOF
+
+      # Commit only if Claude actually changed the file
+      - name: Commit and push fix
+        if: steps.guard.outputs.skip == 'false'
+        id: commit
+        run: |
+          git config user.name  "self-heal[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "${{ steps.info.outputs.workflow_file }}"
+          if git diff --cached --quiet; then
+            echo "Claude produced no changes — nothing to commit."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            git commit -m "self-heal: fix ${{ steps.info.outputs.workflow_file }} (run ${{ steps.info.outputs.run_id }})"
+            git push origin main
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Re-trigger the original workflow so the fix is validated immediately
+      - name: Re-trigger failed workflow
+        if: steps.guard.outputs.skip == 'false' && steps.commit.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run "${{ steps.info.outputs.workflow_file }}" --ref main
