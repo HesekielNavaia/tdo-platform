@@ -240,7 +240,7 @@ After each task: run the test command, fix failures, then mark [x] and commit.
 
 ---
 
-- [ ] **Task 11: Write UN Data adapter**
+- [x] **Task 11: Write UN Data adapter**
 
   Create `src/adapters/un_data.py`
   Portal: SDMX (partial compliance)
