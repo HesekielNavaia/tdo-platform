@@ -118,7 +118,7 @@ After each task: run the test command, fix failures, then mark [x] and commit.
 
 ---
 
-- [ ] **Task 5: Write the harmoniser**
+- [x] **Task 5: Write the harmoniser**
 
   Create `src/pipeline/harmoniser.py` with:
   - `HarmoniserConfig` — settings (LLM endpoints, confidence thresholds)
