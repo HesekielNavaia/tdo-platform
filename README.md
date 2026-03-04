@@ -139,7 +139,16 @@ asyncio.run(harvest_portal('statistics_finland', 'local-run-001'))
 
 ### Prerequisites
 
-1. Azure subscription with Contributor access
+1. Azure subscription with **Contributor** and **User Access Administrator** roles on the subscription (or resource group).
+
+   > **Important:** The Bicep templates assign RBAC roles to managed identities (e.g. Key Vault Secrets Officer, ACR Push). This requires the deploying service principal to have **User Access Administrator** (or Owner) on the target scope. Grant it once manually before the first deploy:
+   > ```bash
+   > az role assignment create \
+   >   --assignee <github-sp-object-id> \
+   >   --role "User Access Administrator" \
+   >   --scope /subscriptions/<subscription-id>
+   > ```
+
 2. GitHub repository with OIDC configured:
    ```bash
    az ad app create --display-name tdo-github-oidc

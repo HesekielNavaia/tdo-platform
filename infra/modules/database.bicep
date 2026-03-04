@@ -94,20 +94,12 @@ resource postgresAadAdmin 'Microsoft.DBforPostgreSQL/flexibleServers/administrat
 }
 
 // ── Server Configurations ─────────────────────────────────────────────────────
-
-resource configSharedPreloadLibraries 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-06-01-preview' = {
-  name: 'shared_preload_libraries'
-  parent: postgresServer
-  properties: {
-    value: 'vector'
-    source: 'user-override'
-  }
-}
+// Note: pgvector is enabled via CREATE EXTENSION vector; after deployment.
+// Do NOT add 'vector' to shared_preload_libraries — it is not a preload library.
 
 resource configMaxConnections 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-06-01-preview' = {
   name: 'max_connections'
   parent: postgresServer
-  dependsOn: [configSharedPreloadLibraries]
   properties: {
     value: environment == 'prod' ? '200' : '50'
     source: 'user-override'
@@ -122,14 +114,6 @@ resource configWorkMem 'Microsoft.DBforPostgreSQL/flexibleServers/configurations
     value: '16384'
     source: 'user-override'
   }
-}
-
-// ── pgvector Extension ────────────────────────────────────────────────────────
-
-resource pgvectorExtension 'Microsoft.DBforPostgreSQL/flexibleServers/extensions@2023-06-01-preview' = {
-  name: 'vector'
-  parent: postgresServer
-  dependsOn: [configSharedPreloadLibraries]
 }
 
 // ── Database ──────────────────────────────────────────────────────────────────
