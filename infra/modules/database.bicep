@@ -41,6 +41,14 @@ param storageSizeGB int = 32
 @description('PostgreSQL version')
 param postgresVersion string = '16'
 
+@description('''
+Apply server parameter configurations (max_connections, work_mem).
+Set to false when re-deploying to an existing server that returns ServerIsBusy;
+the parameters will retain their previously configured values.
+Defaults to true for fresh deployments.
+''')
+param applyServerConfig bool = true
+
 // ── PostgreSQL Flexible Server ────────────────────────────────────────────────
 
 resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-06-01-preview' = {
@@ -96,17 +104,24 @@ resource postgresAadAdmin 'Microsoft.DBforPostgreSQL/flexibleServers/administrat
 // ── Server Configurations ─────────────────────────────────────────────────────
 // Note: pgvector is enabled via CREATE EXTENSION vector; after deployment.
 // Do NOT add 'vector' to shared_preload_libraries — it is not a preload library.
+//
+// Both config resources are conditional on applyServerConfig. Pass
+// applyServerConfig=false when the server already exists and returns
+// ServerIsBusy — the previously applied values are retained.
+// Both resources depend on postgresAadAdmin to ensure the server has finished
+// its AAD configuration (which provides a natural stabilisation delay).
 
-resource configMaxConnections 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-06-01-preview' = {
+resource configMaxConnections 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-06-01-preview' = if (applyServerConfig) {
   name: 'max_connections'
   parent: postgresServer
+  dependsOn: [postgresAadAdmin]
   properties: {
     value: environment == 'prod' ? '200' : '50'
     source: 'user-override'
   }
 }
 
-resource configWorkMem 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-06-01-preview' = {
+resource configWorkMem 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-06-01-preview' = if (applyServerConfig) {
   name: 'work_mem'
   parent: postgresServer
   dependsOn: [configMaxConnections]

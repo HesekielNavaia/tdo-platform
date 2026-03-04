@@ -45,6 +45,9 @@ param postgresSkuName string = 'Standard_B1ms'
 @allowed(['Burstable', 'GeneralPurpose', 'MemoryOptimized'])
 param postgresSkuTier string = 'Burstable'
 
+@description('Apply PostgreSQL server parameter configurations. Set to false on re-deployments to avoid ServerIsBusy errors on an existing server.')
+param postgresApplyServerConfig bool = true
+
 // ── Name prefix ───────────────────────────────────────────────────────────────
 
 var namePrefix = 'tdo'
@@ -130,6 +133,7 @@ module database 'modules/database.bicep' = {
     skuName: postgresSkuName
     skuTier: postgresSkuTier
     storageSizeGB: environment == 'prod' ? 128 : 32
+    applyServerConfig: postgresApplyServerConfig
   }
 }
 
