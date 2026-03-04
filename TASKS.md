@@ -73,7 +73,7 @@ After each task: run the test command, fix failures, then mark [x] and commit.
 
 ---
 
-- [ ] **Task 3: Write database models**
+- [x] **Task 3: Write database models**
 
   Create `src/models/db.py` with SQLAlchemy async models matching
   the PostgreSQL schema in tdo_build_prompt_v2.md:
