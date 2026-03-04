@@ -64,6 +64,13 @@ param identityApiId string
 @description('Client ID of the API managed identity')
 param identityApiClientId string
 
+@description('Use placeholder image for initial deployment before ACR images are pushed. Set to false after deploy-app has pushed real images.')
+param initialDeploy bool = true
+
+// ── Variables ─────────────────────────────────────────────────────────────────
+
+var placeholderImage = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+
 // ── Log Analytics workspace reference (for shared key) ────────────────────────
 
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2022-10-01' existing = {
@@ -149,7 +156,7 @@ resource jobHarvest 'Microsoft.App/jobs@2024-03-01' = {
       containers: [
         {
           name: 'harvest'
-          image: '${acrLoginServer}/tdo/harvest:latest'
+          image: initialDeploy ? placeholderImage : '${acrLoginServer}/tdo/harvest:latest'
           resources: {
             cpu: json('0.5')
             memory: '1Gi'
@@ -198,7 +205,7 @@ resource jobHarmonise 'Microsoft.App/jobs@2024-03-01' = {
       containers: [
         {
           name: 'harmonise'
-          image: '${acrLoginServer}/tdo/harmonise:latest'
+          image: initialDeploy ? placeholderImage : '${acrLoginServer}/tdo/harmonise:latest'
           resources: {
             cpu: json('1.0')
             memory: '2Gi'
@@ -247,7 +254,7 @@ resource jobEmbed 'Microsoft.App/jobs@2024-03-01' = {
       containers: [
         {
           name: 'embed'
-          image: '${acrLoginServer}/tdo/embed:latest'
+          image: initialDeploy ? placeholderImage : '${acrLoginServer}/tdo/embed:latest'
           resources: {
             cpu: json('2.0')
             memory: '4Gi'
@@ -286,7 +293,7 @@ resource appApi 'Microsoft.App/containerApps@2024-03-01' = {
       activeRevisionsMode: 'Single'
       ingress: {
         external: true
-        targetPort: 8000
+        targetPort: initialDeploy ? 80 : 8000
         transport: 'http'
         allowInsecure: false
         traffic: [
@@ -296,7 +303,7 @@ resource appApi 'Microsoft.App/containerApps@2024-03-01' = {
           }
         ]
       }
-      registries: [
+      registries: initialDeploy ? [] : [
         {
           server: acrLoginServer
           identity: identityApiId
@@ -307,7 +314,7 @@ resource appApi 'Microsoft.App/containerApps@2024-03-01' = {
       containers: [
         {
           name: 'api'
-          image: '${acrLoginServer}/tdo/api:latest'
+          image: initialDeploy ? placeholderImage : '${acrLoginServer}/tdo/api:latest'
           resources: {
             cpu: json('0.5')
             memory: '1Gi'
@@ -322,7 +329,7 @@ resource appApi 'Microsoft.App/containerApps@2024-03-01' = {
               value: 'api'
             }
           ])
-          probes: [
+          probes: initialDeploy ? [] : [
             {
               type: 'Liveness'
               httpGet: {
