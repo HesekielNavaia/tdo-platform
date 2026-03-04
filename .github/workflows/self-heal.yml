@@ -17,6 +17,10 @@ jobs:
     name: Fix failed workflow with Claude
     runs-on: ubuntu-latest
     if: github.event.workflow_run.conclusion == 'failure'
+    permissions:
+      id-token: write
+      contents: write
+      actions: write
 
     steps:
       - uses: actions/checkout@v4
