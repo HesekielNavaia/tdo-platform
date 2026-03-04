@@ -435,7 +435,7 @@ After each task: run the test command, fix failures, then mark [x] and commit.
 
 ## PHASE 8 — Integration test and frontend
 
-- [ ] **Task 20: Write integration test**
+- [x] **Task 20: Write integration test**
 
   Create `tests/integration/test_full_pipeline.py` with the integration
   test from tdo_build_prompt_v2.md:
