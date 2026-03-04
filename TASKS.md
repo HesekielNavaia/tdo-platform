@@ -367,7 +367,7 @@ After each task: run the test command, fix failures, then mark [x] and commit.
 
 ## PHASE 7 — Infrastructure
 
-- [ ] **Task 17: Write Bicep infrastructure templates**
+- [x] **Task 17: Write Bicep infrastructure templates**
 
   Create all Bicep files from tdo_build_prompt_v2.md:
   - infra/main.bicep
