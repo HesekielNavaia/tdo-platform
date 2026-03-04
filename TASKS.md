@@ -153,7 +153,7 @@ After each task: run the test command, fix failures, then mark [x] and commit.
 
 ## PHASE 3 — Portal adapters
 
-- [ ] **Task 6: Write the base portal adapter**
+- [x] **Task 6: Write the base portal adapter**
 
   Create `src/adapters/base.py` with:
   - `RawRecord` dataclass (source_id, portal_id, raw_payload, raw_payload_hash,
