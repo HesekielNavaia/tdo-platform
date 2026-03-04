@@ -350,7 +350,7 @@ After each task: run the test command, fix failures, then mark [x] and commit.
 
 ## PHASE 6 — Orchestration
 
-- [ ] **Task 16: Write Durable Functions orchestrator**
+- [x] **Task 16: Write Durable Functions orchestrator**
 
   Create `src/orchestrator/functions.py` with:
   - `harvest_portal` activity function (calls portal adapter)
