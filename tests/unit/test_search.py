@@ -108,3 +108,120 @@ class TestBuildFilterClause:
             filters = SearchFilters(min_confidence=threshold)
             _, params = build_filter_clause(filters)
             assert params["min_confidence"] == threshold
+
+    def test_theme_filter_added(self):
+        filters = SearchFilters(theme=["Labour market"])
+        clause, params = build_filter_clause(filters)
+        assert "themes" in clause
+        assert params["theme"] == ["Labour market"]
+
+    def test_format_filter_added(self):
+        filters = SearchFilters(format="CSV")
+        clause, params = build_filter_clause(filters)
+        assert "formats" in clause
+
+    def test_updated_after_filter_added(self):
+        filters = SearchFilters(updated_after="2024-01-01")
+        clause, params = build_filter_clause(filters)
+        assert "last_updated" in clause
+        assert params["updated_after"] == "2024-01-01"
+
+
+class TestHybridSearchMocked:
+    """Tests for HybridSearch using a fully mocked DB session."""
+
+    def _make_session_factory(self, sem_rows=None, kw_rows=None, detail_rows=None):
+        """Build a fake async session factory returning preset rows."""
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+
+        sem_rows   = sem_rows   or []
+        kw_rows    = kw_rows    or []
+        detail_rows = detail_rows or []
+
+        call_count = {"n": 0}
+
+        class FakeResult:
+            def __init__(self, rows):
+                self._rows = rows
+            def __iter__(self):
+                return iter(self._rows)
+
+        class FakeSession:
+            async def execute(self, stmt, params=None):
+                n = call_count["n"]
+                call_count["n"] += 1
+                if n == 0:
+                    return FakeResult(kw_rows)
+                return FakeResult(detail_rows)
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *a):
+                pass
+
+        class FakeFactory:
+            def __call__(self):
+                return FakeSession()
+
+        return FakeFactory()
+
+    @pytest.mark.asyncio
+    async def test_search_no_query_returns_empty(self):
+        """Empty query with no embedder returns empty list."""
+        factory = self._make_session_factory()
+        hs = HybridSearch(factory, embedder=None)
+        results = await hs.search("")
+        assert results == []
+
+    @pytest.mark.asyncio
+    async def test_search_with_query_no_embedder(self):
+        """Query without embedder falls back to keyword-only path."""
+        from unittest.mock import AsyncMock, MagicMock
+        factory = self._make_session_factory(kw_rows=[], detail_rows=[])
+        hs = HybridSearch(factory, embedder=None)
+        results = await hs.search("unemployment")
+        assert isinstance(results, list)
+
+    @pytest.mark.asyncio
+    async def test_row_to_mvm_helper(self):
+        """_row_to_mvm should produce a valid MVMRecord from a fake row tuple."""
+        from datetime import datetime, timezone
+        hs = HybridSearch(lambda: None, embedder=None)
+
+        # Build a fake row matching the SELECT column order
+        fake_row = (
+            "uuid-1",        # id
+            "src-1",         # source_id
+            "portal1",       # portal_id
+            "dataset",       # resource_type
+            "Test Title",    # title
+            "A description", # description
+            "Test Pub",      # publisher
+            "NSO",           # publisher_type
+            "statfin",       # source_portal
+            None,            # dataset_url
+            ["kw1"],         # keywords
+            ["theme1"],      # themes
+            ["FI"],          # geographic_coverage
+            "2020",          # temporal_coverage_start
+            None,            # temporal_coverage_end
+            ["fi"],          # languages
+            "annual",        # update_frequency
+            "2024-01-01",    # last_updated
+            "open",          # access_type
+            None,            # access_conditions
+            "CC-BY 4.0",     # license
+            ["CSV"],         # formats
+            None,            # contact_point
+            None,            # provenance
+            "SDMX",          # metadata_standard
+            0.9,             # confidence_score
+            0.8,             # completeness_score
+            0.7,             # freshness_score
+            None,            # link_healthy
+            datetime.now(timezone.utc),  # ingestion_timestamp
+        )
+        mvm = hs._row_to_mvm(fake_row)
+        assert mvm.title == "Test Title"
+        assert mvm.publisher == "Test Pub"
+        assert mvm.confidence_score == 0.9

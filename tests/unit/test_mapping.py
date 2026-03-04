@@ -10,6 +10,13 @@ from src.pipeline.schema_detector import detect_schema
 from src.pipeline.mapping_tables import (
     _frequency_map,
     _iso_date,
+    _access_map,
+    _languages_list,
+    _first,
+    _join,
+    _lower,
+    _strip,
+    coverage_report,
     SCHEMA_TO_MAPPING,
     SCHEMA_DETECTION_SIGNALS,
 )
@@ -155,3 +162,86 @@ class TestIsoDate:
         """_iso_date should return str or None and never raise."""
         result = _iso_date(s)
         assert result is None or isinstance(result, str)
+
+
+class TestHelperFunctions:
+    def test_first_with_list(self):
+        assert _first(["a", "b"]) == "a"
+
+    def test_first_with_scalar(self):
+        assert _first("hello") == "hello"
+
+    def test_first_with_empty_list(self):
+        assert _first([]) == []
+
+    def test_join_with_list(self):
+        fn = _join(", ")
+        assert fn(["a", "b", "c"]) == "a, b, c"
+
+    def test_join_with_scalar(self):
+        fn = _join(", ")
+        assert fn("hello") == "hello"
+
+    def test_join_with_none(self):
+        fn = _join(", ")
+        assert fn(None) is None
+
+    def test_lower(self):
+        assert _lower("HELLO") == "hello"
+
+    def test_lower_none(self):
+        assert _lower(None) is None
+
+    def test_strip(self):
+        assert _strip("  hello  ") == "hello"
+
+    def test_strip_none(self):
+        assert _strip(None) is None
+
+    def test_access_map_open(self):
+        assert _access_map("CC-BY 4.0") == "open"
+        assert _access_map("public domain") == "open"
+
+    def test_access_map_embargoed(self):
+        assert _access_map("embargoed until 2025") == "embargoed"
+
+    def test_access_map_restricted(self):
+        assert _access_map("subscription required") == "restricted"
+
+    def test_access_map_none(self):
+        assert _access_map(None) is None
+
+    def test_access_map_unknown_defaults_open(self):
+        assert _access_map("some random value") == "open"
+
+    def test_languages_list_with_list(self):
+        result = _languages_list(["english", "finnish"])
+        assert "en" in result
+        assert "fi" in result
+
+    def test_languages_list_with_string(self):
+        result = _languages_list("english, french")
+        assert "en" in result
+        assert "fr" in result
+
+    def test_languages_list_with_iso_codes(self):
+        result = _languages_list(["fi", "sv"])
+        assert "fi" in result
+        assert "sv" in result
+
+    def test_languages_list_deduplicates(self):
+        result = _languages_list(["english", "english"])
+        assert result.count("en") == 1
+
+    def test_languages_list_empty(self):
+        assert _languages_list(None) == []
+
+    def test_coverage_report_returns_all_schemas(self):
+        report = coverage_report()
+        assert "SDMX" in report
+        assert "DCAT" in report
+        assert "WorldBank" in report
+        for schema, data in report.items():
+            assert "covered_count" in data
+            assert "coverage_pct" in data
+            assert data["coverage_pct"] >= 0

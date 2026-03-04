@@ -149,3 +149,83 @@ class TestHarmoniserDeterministic:
         mvm, _ = await harmoniser.process(SDMX_PAYLOAD_NO_URL, "statistics_finland")
         assert mvm.ingestion_timestamp is not None
         assert isinstance(mvm.ingestion_timestamp, datetime)
+
+
+class TestHarmoniserHelpers:
+    """Tests for internal helper methods."""
+
+    @pytest.fixture
+    def harmoniser(self):
+        return Harmoniser(config=HarmoniserConfig())
+
+    def test_calc_confidence_empty(self, harmoniser):
+        assert harmoniser._calc_confidence({}) == 0.0
+
+    def test_calc_confidence_with_fields(self, harmoniser):
+        score = harmoniser._calc_confidence({"title": 1.0, "description": 0.8})
+        assert 0.0 <= score <= 1.0
+
+    def test_calc_completeness_empty(self, harmoniser):
+        score = harmoniser._calc_completeness({})
+        assert 0.0 <= score <= 1.0
+
+    def test_calc_completeness_full(self, harmoniser):
+        full = {
+            "title": "T", "description": "D", "publisher": "P",
+            "geographic_coverage": ["FI"], "themes": ["t"],
+            "update_frequency": "annual", "last_updated": "2024-01-01",
+            "access_type": "open", "formats": ["CSV"],
+        }
+        score = harmoniser._calc_completeness(full)
+        assert score > 0.5
+
+    def test_calc_freshness_no_data(self, harmoniser):
+        assert harmoniser._calc_freshness(None, None) == 0.5
+
+    def test_calc_freshness_recent(self, harmoniser):
+        score = harmoniser._calc_freshness("2024-12-01", "annual")
+        assert 0.0 <= score <= 1.0
+
+    def test_calc_freshness_bad_date(self, harmoniser):
+        score = harmoniser._calc_freshness("not-a-date", "monthly")
+        assert score == 0.5
+
+    def test_apply_deterministic_mapping_sdmx(self, harmoniser):
+        payload = {
+            "data": {
+                "dataflows": [
+                    {"id": "X", "agencyID": "ESTAT", "name": {"en": "Test"}}
+                ]
+            }
+        }
+        result, evidence, confidence = harmoniser._apply_deterministic_mapping(payload, "SDMX")
+        assert isinstance(result, dict)
+        assert isinstance(evidence, dict)
+        assert isinstance(confidence, dict)
+
+    def test_apply_deterministic_mapping_unknown_schema(self, harmoniser):
+        result, evidence, confidence = harmoniser._apply_deterministic_mapping({}, "unknown")
+        assert result == {}
+
+    def test_extract_path_nested(self, harmoniser):
+        payload = {"a": {"b": {"c": "value"}}}
+        assert harmoniser._extract_path(payload, "a.b.c") == "value"
+
+    def test_extract_path_missing(self, harmoniser):
+        assert harmoniser._extract_path({}, "x.y.z") is None
+
+    @pytest.mark.asyncio
+    async def test_process_worldbank_payload(self, harmoniser):
+        payload = {
+            "id": "WB-TEST",
+            "name": "World Bank Test Dataset",
+            "sourceNote": "Some description",
+            "_source_portal": "https://data.worldbank.org",
+            "_publisher": "World Bank",
+            "_publisher_type": "IO",
+            "_access_type": "open",
+            "_schema_detected": "WorldBank",
+        }
+        mvm, meta = await harmoniser.process(payload, "worldbank", source_id="WB-TEST")
+        assert mvm is not None
+        assert mvm.title == "World Bank Test Dataset"
