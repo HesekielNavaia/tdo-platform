@@ -456,7 +456,7 @@ After each task: run the test command, fix failures, then mark [x] and commit.
 
 ---
 
-- [ ] **Task 21: Wire frontend to real API**
+- [x] **Task 21: Wire frontend to real API**
 
   Update `tdo-demo.jsx`:
   - Replace all mock data with real API calls to the FastAPI backend
@@ -479,7 +479,7 @@ After each task: run the test command, fix failures, then mark [x] and commit.
 
 ## PHASE 9 — Final checks
 
-- [ ] **Task 22: Run full test suite and coverage report**
+- [x] **Task 22: Run full test suite and coverage report**
 
   ```
   python -m pytest tests/unit -v --tb=short
@@ -490,7 +490,7 @@ After each task: run the test command, fix failures, then mark [x] and commit.
 
 ---
 
-- [ ] **Task 23: Write README.md**
+- [x] **Task 23: Write README.md**
 
   Create `README.md` with:
   - Project overview (what TDO is, what this platform does)
@@ -504,7 +504,7 @@ After each task: run the test command, fix failures, then mark [x] and commit.
 
 ---
 
-- [ ] **Task 24: Final commit and push**
+- [x] **Task 24: Final commit and push**
 
   ```
   git add .
