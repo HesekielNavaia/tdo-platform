@@ -281,7 +281,7 @@ After each task: run the test command, fix failures, then mark [x] and commit.
 
 ---
 
-- [ ] **Task 13: Write the indexer**
+- [x] **Task 13: Write the indexer**
 
   Create `src/pipeline/indexer.py` with:
   - `Indexer` class
