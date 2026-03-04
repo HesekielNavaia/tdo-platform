@@ -415,7 +415,7 @@ After each task: run the test command, fix failures, then mark [x] and commit.
 
 ---
 
-- [ ] **Task 19: Write docker-compose for local development**
+- [x] **Task 19: Write docker-compose for local development**
 
   Create `docker-compose.yml` with services:
   - postgres (pgvector/pgvector:pg16)
