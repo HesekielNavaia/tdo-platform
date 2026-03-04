@@ -94,7 +94,7 @@ After each task: run the test command, fix failures, then mark [x] and commit.
 
 ## PHASE 2 — Schema mapping and harmonisation
 
-- [ ] **Task 4: Integrate mapping tables**
+- [x] **Task 4: Integrate mapping tables**
 
   Copy `mapping_tables.py` into `src/pipeline/mapping_tables.py`.
   Write `src/pipeline/schema_detector.py` that:
