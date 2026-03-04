@@ -209,7 +209,7 @@ After each task: run the test command, fix failures, then mark [x] and commit.
 
 ---
 
-- [ ] **Task 9: Write Eurostat adapter**
+- [x] **Task 9: Write Eurostat adapter**
 
   Create `src/adapters/eurostat.py`
   Portal: SDMX REST 2.1
@@ -225,7 +225,7 @@ After each task: run the test command, fix failures, then mark [x] and commit.
 
 ---
 
-- [ ] **Task 10: Write OECD adapter**
+- [x] **Task 10: Write OECD adapter**
 
   Create `src/adapters/oecd.py`
   Portal: SDMX REST 2.1
