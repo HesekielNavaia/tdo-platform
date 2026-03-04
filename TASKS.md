@@ -258,7 +258,7 @@ After each task: run the test command, fix failures, then mark [x] and commit.
 
 ## PHASE 4 — Embedding and indexing
 
-- [ ] **Task 12: Write the embedder**
+- [x] **Task 12: Write the embedder**
 
   Create `src/pipeline/embedder.py` with:
   - `EmbedderConfig` — endpoint URL, model ID, expected dimensions
