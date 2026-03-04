@@ -19,11 +19,8 @@ param dnsZonePostgresId string
 #disable-next-line no-unused-params
 param dnsZonePostgresName string
 
-@description('Tenant ID for AAD admin')
+@description('Tenant ID for AAD auth config')
 param tenantId string
-
-@description('Object ID of the administrator (AAD group or user)')
-param administratorObjectId string
 
 @description('Embedding dimension (used to set max vector dims)')
 param embeddingDim int = 1024
@@ -89,18 +86,6 @@ resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-06-01-pr
   }
 }
 
-// ── AAD Administrator ─────────────────────────────────────────────────────────
-
-resource postgresAadAdmin 'Microsoft.DBforPostgreSQL/flexibleServers/administrators@2023-06-01-preview' = {
-  name: administratorObjectId
-  parent: postgresServer
-  properties: {
-    principalType: 'Group'
-    principalName: 'tdo-pg-admins-${environment}'
-    tenantId: tenantId
-  }
-}
-
 // ── Server Configurations ─────────────────────────────────────────────────────
 // Note: pgvector is enabled via CREATE EXTENSION vector; after deployment.
 // Do NOT add 'vector' to shared_preload_libraries — it is not a preload library.
@@ -114,7 +99,6 @@ resource postgresAadAdmin 'Microsoft.DBforPostgreSQL/flexibleServers/administrat
 resource configMaxConnections 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-06-01-preview' = if (applyServerConfig) {
   name: 'max_connections'
   parent: postgresServer
-  dependsOn: [postgresAadAdmin]
   properties: {
     value: environment == 'prod' ? '200' : '50'
     source: 'user-override'

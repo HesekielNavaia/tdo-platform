@@ -128,7 +128,6 @@ module database 'modules/database.bicep' = {
     dnsZonePostgresId: network.outputs.dnsZonePostgresId
     dnsZonePostgresName: network.outputs.dnsZonePostgresName
     tenantId: tenantId
-    administratorObjectId: administratorObjectId
     embeddingDim: embeddingDim
     skuName: postgresSkuName
     skuTier: postgresSkuTier
