@@ -171,7 +171,7 @@ After each task: run the test command, fix failures, then mark [x] and commit.
 
 ---
 
-- [ ] **Task 7: Write Statistics Finland adapter**
+- [x] **Task 7: Write Statistics Finland adapter**
 
   Create `src/adapters/statistics_finland.py`
   Portal: PxWeb REST JSON API
