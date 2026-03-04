@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "tdo-platform"
+version = "0.1.0"
+description = "Trusted Data Observatory — metadata discovery platform"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.0",
+    "fastapi>=0.110",
+    "uvicorn",
+    "httpx",
+    "asyncpg",
+    "structlog",
+    "python-dotenv",
+    "pgvector",
+    "sqlalchemy[asyncio]",
+    "alembic",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["src"]
+omit = ["*/tests/*", "*/__init__.py"]
+
+[tool.coverage.report]
+fail_under = 80
