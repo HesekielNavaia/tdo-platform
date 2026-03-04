@@ -78,14 +78,14 @@ jobs:
       - name: Update Container App revision
         run: |
           az containerapp update \
-            --name tdo-api \
+            --name tdo-app-api-dev \
             --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
             --image ${{ needs.build-and-push.outputs.image-tag }}
 
       - name: Smoke test
         run: |
           APP_URL=$(az containerapp show \
-            --name tdo-api \
+            --name tdo-app-api-dev \
             --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
             --query "properties.configuration.ingress.fqdn" -o tsv)
           curl -sf "https://${APP_URL}/v1/health" || exit 1
