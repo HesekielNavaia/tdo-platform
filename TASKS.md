@@ -51,7 +51,7 @@ After each task: run the test command, fix failures, then mark [x] and commit.
 
 ---
 
-- [ ] **Task 2: Write Pydantic data models**
+- [x] **Task 2: Write Pydantic data models**
 
   Create `src/models/mvm.py` with:
   - `MVMRecord` — the full public MVM schema from tdo_build_prompt_v2.md
