@@ -1,0 +1,135 @@
+name: Deploy Infrastructure
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'infra/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AZURE_SUBSCRIPTION_ID: '2984fe6f-916e-4ab1-ba5d-c34cdf8f9dd8'
+  AZURE_RESOURCE_GROUP: 'tdo-platform-dev'
+  AZURE_LOCATION: 'northeurope'
+  AZURE_CLIENT_ID: '95e0befa-a09a-43ea-acc9-8294ea2bf104'
+  AZURE_TENANT_ID: 'e078eae9-f34e-495c-b095-7e1648269606'
+
+jobs:
+  lint:
+    name: Bicep Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Bicep CLI
+        run: az bicep install
+      - name: Lint main.bicep
+        run: az bicep lint --file infra/main.bicep
+
+  what-if:
+    name: What-If Analysis
+    needs: lint
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+      - name: Run what-if
+        run: |
+          az deployment group what-if \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --template-file infra/main.bicep \
+            --parameters infra/parameters/dev.bicepparam \
+            --parameters tenantId=${{ env.AZURE_TENANT_ID }} \
+            --parameters administratorObjectId=${{ secrets.ADMIN_OBJECT_ID }}
+
+  deploy-dev:
+    name: Deploy to Dev
+    needs: what-if
+    runs-on: ubuntu-latest
+    environment: dev
+    if: github.event.inputs.environment != 'prod' && github.event.inputs.environment != 'staging'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+      - name: Deploy Bicep
+        run: |
+          az deployment group create \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --template-file infra/main.bicep \
+            --parameters infra/parameters/dev.bicepparam \
+            --parameters tenantId=${{ env.AZURE_TENANT_ID }} \
+            --parameters administratorObjectId=${{ secrets.ADMIN_OBJECT_ID }} \
+            --parameters environment=dev
+
+  deploy-staging:
+    name: Deploy to Staging
+    needs: what-if
+    runs-on: ubuntu-latest
+    environment: staging
+    if: github.event.inputs.environment == 'staging'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+      - name: Deploy Bicep
+        run: |
+          az deployment group create \
+            --resource-group tdo-platform-staging \
+            --template-file infra/main.bicep \
+            --parameters infra/parameters/dev.bicepparam \
+            --parameters tenantId=${{ env.AZURE_TENANT_ID }} \
+            --parameters administratorObjectId=${{ secrets.ADMIN_OBJECT_ID }} \
+            --parameters environment=staging
+
+  deploy-prod:
+    name: Deploy to Production
+    needs: [deploy-staging]
+    runs-on: ubuntu-latest
+    environment: prod  # requires manual approval
+    if: github.event.inputs.environment == 'prod'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+      - name: Deploy Bicep
+        run: |
+          az deployment group create \
+            --resource-group tdo-platform-prod \
+            --template-file infra/main.bicep \
+            --parameters infra/parameters/dev.bicepparam \
+            --parameters tenantId=${{ env.AZURE_TENANT_ID }} \
+            --parameters administratorObjectId=${{ secrets.ADMIN_OBJECT_ID }} \
+            --parameters environment=prod

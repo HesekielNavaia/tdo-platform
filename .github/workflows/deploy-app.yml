@@ -1,0 +1,87 @@
+name: Deploy Application
+
+on:
+  workflow_run:
+    workflows:
+      - Deploy Infrastructure
+    types:
+      - completed
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AZURE_SUBSCRIPTION_ID: '2984fe6f-916e-4ab1-ba5d-c34cdf8f9dd8'
+  AZURE_RESOURCE_GROUP: 'tdo-platform-dev'
+  AZURE_TENANT_ID: 'e078eae9-f34e-495c-b095-7e1648269606'
+  AZURE_CLIENT_ID: '95e0befa-a09a-43ea-acc9-8294ea2bf104'
+  ACR_NAME: 'tdodevacr'
+  IMAGE_NAME: 'tdo-api'
+
+jobs:
+  build-and-push:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+      image-digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Log in to ACR
+        run: az acr login --name ${{ env.ACR_NAME }}
+
+      - name: Generate image tag
+        id: meta
+        run: |
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-8)
+          echo "tags=${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "short-sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+
+      - name: Build and push Docker image
+        id: build
+        run: |
+          docker build -t ${{ steps.meta.outputs.tags }} .
+          docker push ${{ steps.meta.outputs.tags }}
+          echo "digest=$(docker inspect --format='{{index .RepoDigests 0}}' ${{ steps.meta.outputs.tags }} | cut -d@ -f2)" >> $GITHUB_OUTPUT
+
+  deploy:
+    name: Update Container App
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Update Container App revision
+        run: |
+          az containerapp update \
+            --name tdo-api \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --image ${{ needs.build-and-push.outputs.image-tag }}
+
+      - name: Smoke test
+        run: |
+          APP_URL=$(az containerapp show \
+            --name tdo-api \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --query "properties.configuration.ingress.fqdn" -o tsv)
+          curl -sf "https://${APP_URL}/v1/health" || exit 1
+          echo "Smoke test passed: https://${APP_URL}/v1/health"

@@ -389,7 +389,7 @@ After each task: run the test command, fix failures, then mark [x] and commit.
 
 ---
 
-- [ ] **Task 18: Write GitHub Actions workflows**
+- [x] **Task 18: Write GitHub Actions workflows**
 
   Create:
   - `.github/workflows/deploy-infra.yml`
