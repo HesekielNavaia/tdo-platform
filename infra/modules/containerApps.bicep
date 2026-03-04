@@ -92,7 +92,7 @@ resource containerAppsEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
     }
     vnetConfiguration: {
       infrastructureSubnetId: containerAppsSubnetId
-      internal: true
+      internal: false
     }
     workloadProfiles: [
       {
