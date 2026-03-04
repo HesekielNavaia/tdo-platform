@@ -1,6 +1,9 @@
 name: Deploy Application
 
 on:
+  push:
+    branches:
+      - main
   workflow_run:
     workflows:
       - Deploy Infrastructure
