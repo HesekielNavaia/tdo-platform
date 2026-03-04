@@ -43,8 +43,17 @@ jobs:
           tenant-id: ${{ env.AZURE_TENANT_ID }}
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Get ACR token
+        id: acr-token
+        run: |
+          echo "password=$(az acr get-login-password --subscription ${{ env.AZURE_SUBSCRIPTION_ID }})" >> "$GITHUB_OUTPUT"
+
       - name: Log in to ACR
-        run: az acr login --name ${{ env.ACR_NAME }}
+        uses: azure/docker-login@v1
+        with:
+          login-server: ${{ env.ACR_NAME }}.azurecr.io
+          username: ${{ env.AZURE_CLIENT_ID }}
+          password: ${{ steps.acr-token.outputs.password }}
 
       - name: Generate image tag
         id: meta
