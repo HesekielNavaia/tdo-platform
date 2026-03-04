@@ -298,7 +298,7 @@ After each task: run the test command, fix failures, then mark [x] and commit.
 
 ## PHASE 5 — Search API
 
-- [ ] **Task 14: Write hybrid search**
+- [x] **Task 14: Write hybrid search**
 
   Create `src/api/search.py` with:
   - `hybrid_search(query, filters, limit, semantic_weight, keyword_weight)`
