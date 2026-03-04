@@ -69,24 +69,73 @@ jobs:
           echo "--- failure_logs.txt ---"
           cat failure_logs.txt
 
-      # Call the Anthropic API; use Python to build the JSON payload safely
-      # so that arbitrary log content cannot break the shell command.
+      # Scan logs for a known Bicep module name and map it to its file.
+      # Only runs for infra workflows; app workflow failures are pure YAML.
+      - name: Detect Bicep module from logs
+        if: steps.guard.outputs.skip == 'false'
+        id: bicep
+        run: |
+          BICEP_FILE=""
+
+          # Only bother scanning if this is the infra workflow
+          if [[ "${{ steps.info.outputs.workflow_file }}" != *"deploy-infra"* ]]; then
+            echo "Not an infra workflow — skipping Bicep detection."
+            echo "bicep_file=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Ordered pairs: keyword → module file.
+          # More specific names first to avoid short-string false positives.
+          declare -a PAIRS=(
+            "containerApps:infra/modules/containerApps.bicep"
+            "identities:infra/modules/identities.bicep"
+            "monitoring:infra/modules/monitoring.bicep"
+            "functions:infra/modules/functions.bicep"
+            "database:infra/modules/database.bicep"
+            "network:infra/modules/network.bicep"
+            "storage:infra/modules/storage.bicep"
+            "keyVault:infra/modules/keyvault.bicep"
+            "keyvault:infra/modules/keyvault.bicep"
+            "acr.bicep:infra/modules/acr.bicep"
+          )
+
+          for PAIR in "${PAIRS[@]}"; do
+            KEYWORD="${PAIR%%:*}"
+            FILE="${PAIR##*:}"
+            if grep -qi "$KEYWORD" failure_logs.txt; then
+              BICEP_FILE="$FILE"
+              echo "Detected Bicep module keyword '$KEYWORD' → $FILE"
+              break
+            fi
+          done
+
+          if [[ -z "$BICEP_FILE" ]]; then
+            echo "No Bicep module detected in logs."
+          fi
+          echo "bicep_file=$BICEP_FILE" >> "$GITHUB_OUTPUT"
+
+      # Call the Anthropic API with the failed workflow file and, when detected,
+      # the relevant Bicep module. Claude returns fixes using a structured
+      # delimiter format so multiple files can be updated in one call.
       - name: Call Claude to generate fix
         if: steps.guard.outputs.skip == 'false'
         id: claude
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           WORKFLOW_FILE: ${{ steps.info.outputs.workflow_file }}
+          BICEP_FILE: ${{ steps.bicep.outputs.bicep_file }}
         run: |
           python3 << 'PYEOF'
           import json
           import os
+          import re
           import sys
           import urllib.error
           import urllib.request
 
           api_key       = os.environ["ANTHROPIC_API_KEY"]
           workflow_file = os.environ["WORKFLOW_FILE"]
+          bicep_file    = os.environ.get("BICEP_FILE", "").strip()
 
           with open(workflow_file) as f:
               workflow_content = f.read()
@@ -94,20 +143,38 @@ jobs:
           with open("failure_logs.txt") as f:
               logs = f.read()
 
-          prompt = (
-              f"A GitHub Actions workflow file failed during a deployment. "
-              f"Your task is to fix it.\n\n"
-              f"## Failed workflow file: {workflow_file}\n\n"
+          # Build the list of files Claude may need to edit
+          files_section = (
+              f"## File 1 — Failed workflow: {workflow_file}\n\n"
               f"```yaml\n{workflow_content}\n```\n\n"
-              f"## Error log from the failed run\n\n"
+          )
+
+          if bicep_file and os.path.isfile(bicep_file):
+              with open(bicep_file) as f:
+                  bicep_content = f.read()
+              files_section += (
+                  f"## File 2 — Bicep module: {bicep_file}\n\n"
+                  f"```bicep\n{bicep_content}\n```\n\n"
+              )
+
+          prompt = (
+              "One or more files need to be fixed to resolve a failed deployment.\n\n"
+              + files_section
+              + "## Error log from the failed run\n\n"
               f"```\n{logs}\n```\n\n"
-              f"Output ONLY the corrected YAML file contents. "
-              f"No explanation, no preamble, no markdown code fences."
+              "Output ONLY the corrected file(s) using this exact delimiter format "
+              "(no explanation, no preamble, no markdown code fences):\n\n"
+              "<<<FILE: path/to/file>>>\n"
+              "<corrected file content>\n"
+              "<<<END>>>\n\n"
+              "Include a <<<FILE>>>...<<<END>>> block for every file that needs "
+              "changes. Use the exact file paths shown above. If a file needs no "
+              "changes, omit its block entirely."
           )
 
           payload = json.dumps({
               "model": "claude-sonnet-4-6",
-              "max_tokens": 4096,
+              "max_tokens": 8192,
               "messages": [{"role": "user", "content": prompt}],
           }).encode()
 
@@ -128,34 +195,61 @@ jobs:
               print(f"Anthropic API error {e.code}: {e.read().decode()}", file=sys.stderr)
               sys.exit(1)
 
-          fixed = data["content"][0]["text"].strip()
+          response_text = data["content"][0]["text"].strip()
 
-          # Strip accidental markdown code fences if Claude added them anyway
-          lines = fixed.splitlines()
-          if lines and lines[0].startswith("```"):
-              lines = lines[1:]
-          if lines and lines[-1].strip().startswith("```"):
-              lines = lines[:-1]
+          # Parse <<<FILE: path>>>...<<<END>>> blocks
+          pattern = re.compile(
+              r'<<<FILE:\s*(.+?)>>>\n(.*?)<<<END>>>',
+              re.DOTALL,
+          )
+          matches = pattern.findall(response_text)
 
-          with open(workflow_file, "w") as f:
-              f.write("\n".join(lines) + "\n")
+          if not matches:
+              # Fallback: Claude ignored the format — treat whole response as
+              # a fix to the workflow file (original single-file behaviour).
+              print("WARNING: Claude did not use the delimiter format; falling back to single-file mode.", file=sys.stderr)
+              lines = response_text.splitlines()
+              if lines and lines[0].startswith("```"):
+                  lines = lines[1:]
+              if lines and lines[-1].strip().startswith("```"):
+                  lines = lines[:-1]
+              matches = [(workflow_file, "\n".join(lines))]
 
-          print(f"Wrote fix to {workflow_file}")
+          allowed_paths = {workflow_file}
+          if bicep_file:
+              allowed_paths.add(bicep_file)
+
+          for path, content in matches:
+              path = path.strip()
+              if path not in allowed_paths:
+                  print(f"WARNING: Claude tried to write unexpected path '{path}' — skipping.", file=sys.stderr)
+                  continue
+              content = content.strip()
+              os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+              with open(path, "w") as f:
+                  f.write(content + "\n")
+              print(f"Wrote fix to {path}")
           PYEOF
 
-      # Commit only if Claude actually changed the file
+      # Commit only if Claude actually changed any file
       - name: Commit and push fix
         if: steps.guard.outputs.skip == 'false'
         id: commit
         run: |
           git config user.name  "self-heal[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
           git add "${{ steps.info.outputs.workflow_file }}"
+          BICEP="${{ steps.bicep.outputs.bicep_file }}"
+          if [[ -n "$BICEP" ]]; then
+            git add "$BICEP"
+          fi
+
           if git diff --cached --quiet; then
             echo "Claude produced no changes — nothing to commit."
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
-            git commit -m "self-heal: fix ${{ steps.info.outputs.workflow_file }} (run ${{ steps.info.outputs.run_id }})"
+            git commit -m "self-heal: fix deployment files (run ${{ steps.info.outputs.run_id }})"
             git push origin main
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
