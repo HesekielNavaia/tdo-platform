@@ -30,16 +30,33 @@ class StatisticsFinlandAdapter(BasePortalAdapter):
     async def fetch_catalogue(self) -> AsyncIterator[RawRecord]:
         """
         Recursively traverse the PxWeb folder tree to discover all leaf datasets.
-        Yields a RawRecord for each dataset found.
+        The root URL returns databases (dbid/text), each database then yields
+        folders (type l/h) and leaf tables (type t).
         """
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            async for record in self._traverse_node(client, ""):
-                yield record
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            # Step 1: fetch top-level databases
+            try:
+                resp = await self._rate_limited_get(client, self.base_url)
+                databases = resp.json()
+            except Exception as e:
+                log.error("statfin_root_error", error=str(e))
+                return
+
+            if not isinstance(databases, list):
+                return
+
+            for db in databases:
+                db_id = db.get("dbid", "")
+                if not db_id:
+                    continue
+                # Step 2: traverse each database
+                async for record in self._traverse_node(client, db_id):
+                    yield record
 
     async def _traverse_node(
         self, client: httpx.AsyncClient, path: str
     ) -> AsyncIterator[RawRecord]:
-        """Recursively traverse a PxWeb catalogue node."""
+        """Recursively traverse a PxWeb catalogue node within a database."""
         url = f"{self.base_url}/{path}".rstrip("/")
         try:
             resp = await self._rate_limited_get(client, url)

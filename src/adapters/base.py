@@ -128,7 +128,10 @@ class BasePortalAdapter(ABC):
 
         for attempt in range(3):
             try:
-                resp = await client.get(url, params=params, headers=headers, timeout=30.0)
+                resp = await client.get(
+                    url, params=params, headers=headers, timeout=30.0,
+                    follow_redirects=True,
+                )
                 resp.raise_for_status()
                 return resp
             except (httpx.HTTPStatusError, httpx.RequestError) as e:

@@ -112,11 +112,14 @@ async def main() -> None:
 
     embedder_config: dict | None = None
     if embedder_endpoint:
+        # Cohere serverless endpoints expose /v1/embeddings, not the bare base URL
+        if not embedder_endpoint.rstrip("/").endswith(("/v1/embeddings", "/score")):
+            embedder_endpoint = embedder_endpoint.rstrip("/") + "/v1/embeddings"
         embedder_config = {
             "endpoint_url": embedder_endpoint,
             "api_key": embedder_key,
         }
-        log.info("embedder_configured", endpoint=embedder_endpoint[:40] + "...")
+        log.info("embedder_configured", endpoint=embedder_endpoint[:60] + "...")
 
     # ── Run pipeline ──────────────────────────────────────────────────────────
     from src.orchestrator.functions import tdo_pipeline_orchestrator
