@@ -21,7 +21,7 @@ STATFIN_BASE_URL = "https://pxdata.stat.fi:443/PxWeb/api/v1/en"
 class StatisticsFinlandAdapter(BasePortalAdapter):
     portal_id = "statistics_finland"
     base_url = STATFIN_BASE_URL
-    rate_limit_rps = 1.0
+    rate_limit_rps = 0.5  # StatFin 429s at ~1 rps; 0.5 rps (2s gap) stays under their limit
     adapter_type = "api"
 
     def get_portal_defaults(self) -> dict[str, Any]:

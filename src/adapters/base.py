@@ -126,7 +126,7 @@ class BasePortalAdapter(ABC):
                 await asyncio.sleep(wait)
             self._last_request_time = time.monotonic()
 
-        for attempt in range(3):
+        for attempt in range(5):
             try:
                 resp = await client.get(
                     url, params=params, headers=headers, timeout=30.0,
@@ -134,8 +134,22 @@ class BasePortalAdapter(ABC):
                 )
                 resp.raise_for_status()
                 return resp
-            except (httpx.HTTPStatusError, httpx.RequestError) as e:
-                if attempt == 2:
+            except httpx.HTTPStatusError as e:
+                if attempt == 4:
+                    self._log.error("http_request_failed", url=url, error=str(e))
+                    raise
+                # 429: respect Retry-After or wait 30s before retrying
+                if e.response.status_code == 429:
+                    retry_after = int(e.response.headers.get("Retry-After", 30))
+                    backoff = max(retry_after, 30)
+                else:
+                    backoff = 2 ** attempt
+                self._log.warning(
+                    "http_retry", url=url, attempt=attempt + 1, backoff=backoff, error=str(e)
+                )
+                await asyncio.sleep(backoff)
+            except httpx.RequestError as e:
+                if attempt == 4:
                     self._log.error("http_request_failed", url=url, error=str(e))
                     raise
                 backoff = 2 ** attempt
