@@ -291,9 +291,16 @@ resource appApi 'Microsoft.App/containerApps@2024-03-01' = {
     workloadProfileName: 'Consumption'
     configuration: {
       activeRevisionsMode: 'Single'
+      secrets: [
+        {
+          name: 'ghcr-token'
+          keyVaultUrl: '${keyVaultUri}secrets/ghcr-token'
+          identity: identityApiId
+        }
+      ]
       ingress: {
         external: true
-        targetPort: initialDeploy ? 80 : 8000
+        targetPort: 8000
         transport: 'http'
         allowInsecure: false
         traffic: [
@@ -303,10 +310,11 @@ resource appApi 'Microsoft.App/containerApps@2024-03-01' = {
           }
         ]
       }
-      registries: initialDeploy ? [] : [
+      registries: [
         {
-          server: acrLoginServer
-          identity: identityApiId
+          server: 'ghcr.io'
+          username: 'hesekielnavaia'
+          passwordSecretRef: 'ghcr-token'
         }
       ]
     }
@@ -314,7 +322,7 @@ resource appApi 'Microsoft.App/containerApps@2024-03-01' = {
       containers: [
         {
           name: 'api'
-          image: initialDeploy ? placeholderImage : '${acrLoginServer}/tdo/api:latest'
+          image: initialDeploy ? placeholderImage : 'ghcr.io/hesekielnavaia/tdo-api:latest'
           resources: {
             cpu: json('0.5')
             memory: '1Gi'
