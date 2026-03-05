@@ -17,9 +17,10 @@ depends_on = None
 # These must match exactly as they appear in Azure AD
 AAD_USERS = [
     # (display_name, object_id, is_admin)
+    # OIDs are principalId values from `az identity list --resource-group tdo-platform-dev`
     ("tdo-id-harvest-dev",   "26192378-4d99-4306-9304-a06292e16d26", False),
-    ("tdo-id-harmonise-dev", "33df6bf8-3d72-4215-8e59-e7ce686da107", False),
-    ("tdo-id-api-dev",       "e7454e98-e87a-4887-adbb-ad605a0b7f62", False),
+    ("tdo-id-harmonise-dev", "fb623fbb-b3b0-4ef6-ad04-055bab8f7034", False),
+    ("tdo-id-api-dev",       "c92226bc-809c-4358-aaa4-59bb75d8bb22", False),
 ]
 
 
