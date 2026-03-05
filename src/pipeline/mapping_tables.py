@@ -503,6 +503,10 @@ WORLDBANK_TO_MVM: dict[str, tuple[str, Callable | None]] = {
 # ---------------------------------------------------------------------------
 
 SCHEMA_DETECTION_SIGNALS: dict[str, list[str]] = {
+    "PxWeb": [
+        "pxweb_path",
+        "variables",
+    ],
     "SDMX": [
         "data.dataflows",
         "data.structures",
@@ -540,7 +544,29 @@ SCHEMA_DETECTION_SIGNALS: dict[str, list[str]] = {
     ],
 }
 
+# ---------------------------------------------------------------------------
+# 6b. PXWEB → MVM
+# Statistics Finland uses the PxWeb REST API, which returns a flat JSON
+# response with a top-level "title" field and a "variables" array.
+# Portal-level defaults supply publisher, access, license, formats.
+# ---------------------------------------------------------------------------
+
+PXWEB_TO_MVM: dict[str, tuple[str, Callable | None]] = {
+    # --- Title ---
+    "title":              ("title",            _strip),
+
+    # --- Injected by crawler / portal defaults ---
+    "_source_portal":     ("source_portal",    _strip),
+    "_publisher_type":    ("publisher_type",   _strip),
+    "_formats":           ("formats",          None),
+    "_access_type":       ("access_type",      None),
+    "_license":           ("license",          _strip),
+    "_dataset_url":       ("dataset_url",      _strip),
+}
+
+
 SCHEMA_TO_MAPPING: dict[str, dict] = {
+    "PxWeb":       PXWEB_TO_MVM,
     "SDMX":        SDMX_TO_MVM,
     "DCAT":        DCAT_TO_MVM,
     "DublinCore":  DUBLIN_CORE_TO_MVM,
@@ -582,7 +608,7 @@ PORTAL_DEFAULTS: dict[str, dict[str, Any]] = {
         "_formats":         ["JSON", "SDMX", "PX", "CSV"],
         "_access_type":     "open",
         "_license":         "CC-BY 4.0",
-        "_schema_detected": "SDMX",
+        "_schema_detected": "PxWeb",
     },
     "eurostat": {
         "_source_portal":   "https://ec.europa.eu/eurostat",

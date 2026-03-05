@@ -100,6 +100,7 @@ class StatisticsFinlandAdapter(BasePortalAdapter):
             **self.get_portal_defaults(),
             "pxweb_path": source_id,
             "pxweb_response": raw,
+            "_dataset_url": f"https://pxdata.stat.fi/PxWeb/pxweb/en/{source_id.lstrip('/')}",
         }
 
         # Extract the key metadata fields from the PxWeb response

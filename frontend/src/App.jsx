@@ -281,7 +281,7 @@ function inferDatasetUrl(r) {
     return `https://data.un.org/Data.aspx?d=${encodeURIComponent(sourceId)}`;
   }
   if (portal.includes("stat.fi")) {
-    return `https://pxdata.stat.fi/PxWeb/pxweb/en/${encodeURIComponent(sourceId)}`;
+    return `https://pxdata.stat.fi/PxWeb/pxweb/en/${sourceId.split("/").map(encodeURIComponent).join("/")}`;
   }
   return portal || null;
 }
