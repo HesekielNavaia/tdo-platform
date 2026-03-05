@@ -26,24 +26,11 @@ AAD_USERS = [
 
 
 def upgrade() -> None:
-    conn = op.get_bind()
-    for name, oid, is_admin in AAD_USERS:
-        # pgaadauth_create_principal_with_oid(name, oid, role, is_superuser, is_replication)
-        # role: 'service' for managed identity
-        conn.execute(text(
-            f"SELECT * FROM pgaadauth_create_principal_with_oid("
-            f"'{name}', '{oid}', 'service', false, false)"
-        ))
-        conn.execute(text(f"GRANT ALL ON SCHEMA public TO \"{name}\""))
-        conn.execute(text(f"GRANT ALL ON ALL TABLES IN SCHEMA public TO \"{name}\""))
-        conn.execute(text(f"GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO \"{name}\""))
-        conn.execute(text(
-            f"ALTER DEFAULT PRIVILEGES IN SCHEMA public "
-            f"GRANT ALL ON TABLES TO \"{name}\""
-        ))
+    # Managed identities are registered as Azure AD admins via the Azure Portal/CLI,
+    # not via pgaadauth_create_principal_with_oid (which may not be available).
+    # Azure AD admins already have full privileges so no GRANT statements needed.
+    pass
 
 
 def downgrade() -> None:
-    conn = op.get_bind()
-    for name, _, _ in AAD_USERS:
-        conn.execute(text(f"DROP ROLE IF EXISTS \"{name}\""))
+    pass
