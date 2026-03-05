@@ -7,6 +7,7 @@ Create Date: 2026-03-05
 from __future__ import annotations
 
 from alembic import op
+from sqlalchemy import text
 
 revision = "0002_create_aad_users"
 down_revision = "0001_initial_schema"
@@ -29,20 +30,20 @@ def upgrade() -> None:
     for name, oid, is_admin in AAD_USERS:
         # pgaadauth_create_principal_with_oid(name, oid, role, is_superuser, is_replication)
         # role: 'service' for managed identity
-        conn.execute(
+        conn.execute(text(
             f"SELECT * FROM pgaadauth_create_principal_with_oid("
             f"'{name}', '{oid}', 'service', false, false)"
-        )
-        conn.execute(f"GRANT ALL ON SCHEMA public TO \"{name}\"")
-        conn.execute(f"GRANT ALL ON ALL TABLES IN SCHEMA public TO \"{name}\"")
-        conn.execute(f"GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO \"{name}\"")
-        conn.execute(
+        ))
+        conn.execute(text(f"GRANT ALL ON SCHEMA public TO \"{name}\""))
+        conn.execute(text(f"GRANT ALL ON ALL TABLES IN SCHEMA public TO \"{name}\""))
+        conn.execute(text(f"GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO \"{name}\""))
+        conn.execute(text(
             f"ALTER DEFAULT PRIVILEGES IN SCHEMA public "
             f"GRANT ALL ON TABLES TO \"{name}\""
-        )
+        ))
 
 
 def downgrade() -> None:
     conn = op.get_bind()
     for name, _, _ in AAD_USERS:
-        conn.execute(f"DROP ROLE IF EXISTS \"{name}\"")
+        conn.execute(text(f"DROP ROLE IF EXISTS \"{name}\""))
