@@ -543,7 +543,7 @@ async def _openai_summarise(question: str, snippets: list[str]) -> str:
     """Call Azure OpenAI to produce a brief summary over search snippets."""
     endpoint = os.environ.get("OPENAI_ENDPOINT", "")
     api_key  = os.environ.get("OPENAI_API_KEY", "")
-    model    = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+    model    = os.environ.get("OPENAI_MODEL", "gpt-4o")
     if not endpoint or not api_key:
         return ""
     import httpx
@@ -576,7 +576,7 @@ async def _openai_summarise(question: str, snippets: list[str]) -> str:
             resp.raise_for_status()
             return resp.json()["choices"][0]["message"]["content"].strip()
     except Exception as exc:
-        log.warning("openai_summary_failed", error=str(exc))
+        log.warning("openai_summary_failed", url=chat_url, error=str(exc))
         return ""
 
 
