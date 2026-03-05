@@ -39,11 +39,11 @@ resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
     name: 'Premium'
   }
   properties: {
-    adminUserEnabled: false
-    publicNetworkAccess: 'Disabled'
+    adminUserEnabled: true
+    publicNetworkAccess: 'Enabled'
     zoneRedundancy: 'Disabled'
     networkRuleSet: {
-      defaultAction: 'Deny'
+      defaultAction: 'Allow'
     }
     policies: {
       quarantinePolicy: {
