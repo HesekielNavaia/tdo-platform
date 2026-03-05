@@ -58,7 +58,114 @@ class Dataset(Base):
     contact_point = Column(Text)
     provenance = Column(Text)
     metadata_standard = Column(Text)
-    # LLM-extracted from description text
+
+    # ── Extended Provenance (DCAT-AP 2.1, Dublin Core, W3C PROV) ─────────────
+    version = Column(Text)
+    version_notes = Column(Text)
+    derived_from = Column(ARRAY(Text))
+    supersedes = Column(ARRAY(Text))
+    is_part_of = Column(Text)
+    source_system = Column(Text)
+    processing_steps = Column(ARRAY(Text))
+    source_metadata_url = Column(Text)
+    data_collection_start = Column(Text)
+    data_collection_end = Column(Text)
+    issued = Column(Text)
+    modified = Column(Text)
+    license_uri = Column(Text)
+    contact_email = Column(Text)
+
+    # ── Access & Endpoints (DCAT-AP 2.1, VoID, OGC) ──────────────────────────
+    api_endpoint = Column(Text)
+    api_documentation_url = Column(Text)
+    sparql_endpoint = Column(Text)
+    bulk_download_url = Column(Text)
+    wfs_endpoint = Column(Text)
+    wcs_endpoint = Column(Text)
+    odata_endpoint = Column(Text)
+    download_urls = Column(ARRAY(Text))
+    media_types = Column(ARRAY(Text))
+
+    # ── Statistical Methodology (SDMX 3.0, DDI-CDI) ──────────────────────────
+    statistical_unit = Column(Text)
+    statistical_unit_confidence = Column(Float)
+    statistical_population = Column(Text)
+    collection_mode = Column(Text)
+    imputation_method = Column(Text)
+    seasonal_adjustment = Column(Text)
+    classification_systems = Column(ARRAY(Text))
+    classification_systems_confidence = Column(Float)
+    reference_period = Column(Text)
+    reference_period_confidence = Column(Float)
+    revision_policy = Column(Text)
+    coverage_rate = Column(Text)
+    sample_size = Column(Text)
+    confidentiality_policy = Column(Text)
+    embargo_date = Column(Text)
+
+    # ── Data Quality (ISO 19115, DCAT-AP 2.1, DataCite) ──────────────────────
+    accuracy_notes = Column(Text)
+    completeness_notes = Column(Text)
+    consistency_notes = Column(Text)
+    validation_report_url = Column(Text)
+    known_issues = Column(Text)
+    quality_assurance_procedure = Column(Text)
+
+    # ── Geographic Metadata (ISO 19115, DCAT-AP 2.1) ─────────────────────────
+    spatial_resolution = Column(Text)
+    coordinate_system = Column(Text)
+    bounding_box = Column(Text)
+    geographic_level = Column(Text)
+
+    # ── Interoperability (SDMX, Eurostat, Wikidata, VoID) ────────────────────
+    concept_uris = Column(ARRAY(Text))
+    related_standards = Column(ARRAY(Text))
+    wikidata_id = Column(Text)
+    eurostat_code = Column(Text)
+    sdmx_dataflow_id = Column(Text)
+    sdmx_agency_id = Column(Text)
+    dsd_url = Column(Text)
+    linked_data_uri = Column(Text)
+
+    # ── FAIR Principles ───────────────────────────────────────────────────────
+    persistent_identifier = Column(Text)
+    metadata_standard_uri = Column(Text)
+    vocabulary_uris = Column(ARRAY(Text))
+    reuse_conditions = Column(Text)
+    rights_statement = Column(Text)
+
+    # ── Citation (DataCite 4.4) ────────────────────────────────────────────────
+    doi = Column(Text)
+    isbn = Column(Text)
+    citation_text = Column(Text)
+    preferred_citation_format = Column(Text)
+    publication_year = Column(Integer)
+    creators = Column(ARRAY(Text))
+    contributors = Column(ARRAY(Text))
+    funding_info = Column(ARRAY(Text))
+    related_identifiers = Column(ARRAY(Text))
+
+    # ── Dublin Core extensions ────────────────────────────────────────────────
+    dc_type = Column(Text)
+    dc_subject = Column(ARRAY(Text))
+    dc_relation = Column(ARRAY(Text))
+    dc_rights = Column(Text)
+    dc_format = Column(Text)
+    dc_audience = Column(ARRAY(Text))
+    dc_accrual_periodicity = Column(Text)
+    dc_conforms_to = Column(ARRAY(Text))
+
+    # ── AI & ML Usability (Croissant ML, schema.org/Dataset) ─────────────────
+    query_hints = Column(ARRAY(Text))
+    query_hints_confidence = Column(Float)
+    typical_use_cases = Column(ARRAY(Text))
+    typical_use_cases_confidence = Column(Float)
+    not_suitable_for = Column(ARRAY(Text))
+    training_data_suitability = Column(Text)
+    ml_task_types = Column(ARRAY(Text))
+    croissant_url = Column(Text)
+
+    # ── LLM-extracted from description text ───────────────────────────────────
     time_series_length = Column(Text)
     time_series_length_confidence = Column(Float)
     methodology_url = Column(Text)
