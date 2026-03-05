@@ -29,11 +29,12 @@ var storageBlobDataContributorRoleId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
 
 // Unique suffix to avoid naming conflicts; storage names must be 3–24 alphanumeric chars
 var storageBaseName = '${replace(namePrefix, '-', '')}sa${environment}'
-// Ensure at least 3 characters by falling back to 'tdosa${environment}'
-var storageAccountName = length(storageBaseName) < 3 ? 'tdosa${environment}' : storageBaseName
+// Ensure at least 3 characters by padding with a fixed prefix
+var storageAccountNameFull = 'tdo${storageBaseName}'
+var storageAccountName = length(storageAccountNameFull) > 24 ? substring(storageAccountNameFull, 0, 24) : storageAccountNameFull
 
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-01-01' = {
-  name: length(storageAccountName) > 24 ? substring(storageAccountName, 0, 24) : storageAccountName
+  name: storageAccountName
   location: location
   sku: {
     name: 'Standard_LRS'
