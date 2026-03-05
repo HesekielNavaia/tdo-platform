@@ -262,8 +262,33 @@ function ProvenancePanel({ recordId, recordMeta, onClose }) {
   );
 }
 
+// Construct a best-effort dataset URL from portal + source identifiers
+function inferDatasetUrl(r) {
+  if (r.dataset_url) return r.dataset_url;
+  const portal = r.source_portal || "";
+  const sourceId = r.source_id || "";
+  if (portal.includes("eurostat")) {
+    return `https://ec.europa.eu/eurostat/databrowser/view/${encodeURIComponent(sourceId)}/default/table`;
+  }
+  if (portal.includes("worldbank") || portal.includes("data.worldbank.org")) {
+    const code = sourceId.replace(/^WB:/, "");
+    return `https://data.worldbank.org/indicator/${encodeURIComponent(code)}`;
+  }
+  if (portal.includes("oecd")) {
+    return `https://stats.oecd.org/index.aspx?queryid=${encodeURIComponent(sourceId)}`;
+  }
+  if (portal.includes("un.org") || portal.includes("data.un.org")) {
+    return `https://data.un.org/Data.aspx?d=${encodeURIComponent(sourceId)}`;
+  }
+  if (portal.includes("stat.fi")) {
+    return `https://pxdata.stat.fi/PxWeb/pxweb/en/${encodeURIComponent(sourceId)}`;
+  }
+  return portal || null;
+}
+
 // Map API SearchResult to display-friendly shape
-function normaliseResult(r) {
+function normaliseResult(result) {
+  const r = result.record ?? result;
   return {
     id:           r.id,
     title:        r.title,
@@ -280,7 +305,7 @@ function normaliseResult(r) {
     completeness: Math.round((r.completeness_score ?? 0) * 100),
     description:  r.description || "",
     temporal:     [r.temporal_coverage_start, r.temporal_coverage_end].filter(Boolean).join("–") || "—",
-    url:          r.dataset_url || null,
+    url:          inferDatasetUrl(r),
     themes:       r.themes || [],
     provenance:   r.field_evidence || {},
   };
@@ -416,6 +441,9 @@ export default function TDOApp() {
   const [provenanceRec, setProvenanceRec] = useState(null);
   const [aiAnswer, setAiAnswer]     = useState("");
   const [aiLoading, setAiLoading]   = useState(false);
+  const [pageSize, setPageSize]     = useState(20);
+  const [currentOffset, setCurrentOffset] = useState(0);
+  const [hasMore, setHasMore]       = useState(false);
 
   // Dashboard state
   const [portals, setPortals]       = useState([]);
@@ -472,19 +500,24 @@ export default function TDOApp() {
     : (stats?.avg_confidence ? Math.round(stats.avg_confidence * 100) : 0);
   const maxPortalCount = portals.reduce((m, p) => Math.max(m, p.count), 1);
 
-  const handleSearch = useCallback(async (q) => {
+  const handleSearch = useCallback(async (q, limit = pageSize) => {
     const qUsed = (q || query).trim();
     if (!qUsed) return;
     setSearchLoading(true);
     setSearchError(null);
     setSubmitted(qUsed);
     setAiAnswer("");
+    setCurrentOffset(0);
+    setHasMore(false);
 
     try {
-      const params = new URLSearchParams({ q: qUsed, limit: "20" });
+      const params = new URLSearchParams({ q: qUsed, limit: String(limit), offset: "0" });
       const data   = await apiFetch(`/v1/datasets?${params}`);
       const items  = Array.isArray(data) ? data : (data.results || data.datasets || []);
-      setResults(items.map(normaliseResult));
+      const normalized = items.map(normaliseResult);
+      setResults(normalized);
+      setCurrentOffset(normalized.length);
+      setHasMore(normalized.length === limit);
     } catch (err) {
       setSearchError(err.message);
       setResults([]);
@@ -505,7 +538,26 @@ export default function TDOApp() {
         // AI summary is best-effort; don't surface error to user
       })
       .finally(() => setAiLoading(false));
-  }, [query]);
+  }, [query, pageSize]);
+
+  const handleLoadMore = useCallback(async () => {
+    if (!submitted || searchLoading) return;
+    setSearchLoading(true);
+    setSearchError(null);
+    try {
+      const params = new URLSearchParams({ q: submitted, limit: String(pageSize), offset: String(currentOffset) });
+      const data   = await apiFetch(`/v1/datasets?${params}`);
+      const items  = Array.isArray(data) ? data : (data.results || data.datasets || []);
+      const normalized = items.map(normaliseResult);
+      setResults(prev => [...prev, ...normalized]);
+      setCurrentOffset(prev => prev + normalized.length);
+      setHasMore(normalized.length === pageSize);
+    } catch (err) {
+      setSearchError(err.message);
+    } finally {
+      setSearchLoading(false);
+    }
+  }, [submitted, currentOffset, pageSize, searchLoading]);
 
   const EXAMPLE_QUERIES = [
     "unemployment statistics Finland",
@@ -703,10 +755,29 @@ export default function TDOApp() {
             {/* Results */}
             {!searchLoading && results.length > 0 && (
               <div>
-                <div style={{ fontSize: 13, color: tokens.gray400, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ fontSize: 13, color: tokens.gray400, marginBottom: 16, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   <span style={{ fontWeight: 700, color: tokens.gray900 }}>{results.length} datasets</span>
                   found for <strong>"{submitted}"</strong>
                   <span>· ranked by relevance and confidence</span>
+                  <div style={{ marginLeft: "auto" }}>
+                    <select
+                      value={pageSize}
+                      onChange={e => {
+                        const newSize = Number(e.target.value);
+                        setPageSize(newSize);
+                        handleSearch(submitted, newSize);
+                      }}
+                      style={{
+                        border: `1px solid ${tokens.gray200}`, borderRadius: 6,
+                        padding: "4px 8px", fontSize: 12, color: tokens.gray600,
+                        background: tokens.white, cursor: "pointer", fontFamily: "inherit",
+                      }}
+                    >
+                      <option value={20}>20 per page</option>
+                      <option value={50}>50 per page</option>
+                      <option value={100}>100 per page</option>
+                    </select>
+                  </div>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   {results.map((r, i) => (
@@ -715,6 +786,32 @@ export default function TDOApp() {
                     </div>
                   ))}
                 </div>
+                {hasMore && (
+                  <div style={{ textAlign: "center", marginTop: 24 }}>
+                    <button
+                      onClick={handleLoadMore}
+                      disabled={searchLoading}
+                      style={{
+                        background: tokens.white, color: tokens.blue,
+                        border: `2px solid ${tokens.blue}`, borderRadius: 8,
+                        padding: "10px 32px", fontSize: 14, fontWeight: 700,
+                        cursor: searchLoading ? "default" : "pointer",
+                        opacity: searchLoading ? 0.7 : 1,
+                        letterSpacing: "0.04em", transition: "all 0.15s",
+                        fontFamily: "inherit",
+                      }}
+                      onMouseEnter={e => { if (!searchLoading) { e.target.style.background = tokens.blueLight; } }}
+                      onMouseLeave={e => { e.target.style.background = tokens.white; }}
+                    >
+                      {searchLoading ? "Loading…" : "Load more"}
+                    </button>
+                  </div>
+                )}
+                {!hasMore && results.length > 0 && (
+                  <div style={{ textAlign: "center", marginTop: 20, fontSize: 12, color: tokens.gray400 }}>
+                    All {results.length} results shown
+                  </div>
+                )}
               </div>
             )}
 
