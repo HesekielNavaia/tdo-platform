@@ -62,7 +62,7 @@ class WorldBankAdapter(BasePortalAdapter):
                     source_id = str(source.get("id", source.get("code", "")))
                     yield self._make_record(source_id, enriched)
 
-                total_pages = meta.get("pages", 1)
+                total_pages = int(meta.get("pages", 1))
                 if page >= total_pages:
                     break
                 page += 1

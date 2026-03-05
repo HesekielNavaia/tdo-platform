@@ -17,7 +17,7 @@ from src.pipeline.mapping_tables import PORTAL_DEFAULTS
 log = structlog.get_logger(__name__)
 
 OECD_BASE_URL = "https://sdmx.oecd.org/public/rest"
-OECD_DATAFLOW_URL = f"{OECD_BASE_URL}/dataflow/OECD"
+OECD_DATAFLOW_URL = f"{OECD_BASE_URL}/dataflow/all/all/latest"
 
 # Keywords indicating sub-national or experimental dataflows → resource_type="table"
 SUBNATIONAL_INDICATORS = {
@@ -56,7 +56,7 @@ class OECDAdapter(BasePortalAdapter):
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await self._rate_limited_get(
                 client,
-                f"{OECD_DATAFLOW_URL}/{source_id}",
+                f"{OECD_BASE_URL}/dataflow/OECD/{source_id}/latest",
                 params={"detail": "full"},
                 headers={"Accept": "application/xml"},
             )
