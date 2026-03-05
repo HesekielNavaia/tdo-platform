@@ -213,9 +213,32 @@ async def list_portals():
 # GET /v1/health
 # ---------------------------------------------------------------------------
 
+async def _probe_endpoint(url: str, api_key: str | None = None) -> str:
+    """Return 'connected', 'error', or 'not_configured'."""
+    if not url:
+        return "not_configured"
+    import httpx
+    try:
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(url, headers=headers)
+        # Any HTTP response (even 404/405) means the service is reachable
+        return "connected" if resp.status_code < 500 else "error"
+    except Exception:
+        return "error"
+
+
 @app.get("/v1/health")
 async def health():
     """Pipeline status per portal, queue depths, model endpoint health."""
+    embedding_url = os.environ.get("EMBEDDING_ENDPOINT", "")
+    embedding_key = os.environ.get("EMBEDDING_API_KEY", "")
+    openai_url    = os.environ.get("OPENAI_ENDPOINT", "")
+    openai_key    = os.environ.get("OPENAI_API_KEY", "")
+
+    embedder_status   = await _probe_endpoint(embedding_url, embedding_key)
+    harmoniser_status = await _probe_endpoint(openai_url, openai_key)
+
     return {
         "status": "ok",
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -225,9 +248,9 @@ async def health():
             for pid in ["statistics_finland", "world_bank", "eurostat", "oecd", "un_data"]
         },
         "model_endpoints": {
-            "embedder": "not_configured",
-            "harmoniser": "not_configured",
-        }
+            "embedder": embedder_status,
+            "harmoniser": harmoniser_status,
+        },
     }
 
 
