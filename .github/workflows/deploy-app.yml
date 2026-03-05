@@ -24,6 +24,7 @@ env:
   AZURE_TENANT_ID: 'e078eae9-f34e-495c-b095-7e1648269606'
   AZURE_CLIENT_ID: '95e0befa-a09a-43ea-acc9-8294ea2bf104'
   IMAGE: 'ghcr.io/hesekielnavaia/tdo-api'
+  ACR_IMAGE: 'tdoacrdev.azurecr.io/tdo-api'
 
 jobs:
   build-and-push:
@@ -32,6 +33,7 @@ jobs:
     if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' || github.event_name == 'push' }}
     outputs:
       image-tag: ${{ steps.meta.outputs.tag }}
+      acr-image-tag: ${{ steps.meta.outputs.acr-tag }}
       image-digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
@@ -43,6 +45,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Log in to Azure Container Registry
+        run: az acr login --name tdoacrdev
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -51,6 +63,7 @@ jobs:
         run: |
           SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-8)
           echo "tag=${{ env.IMAGE }}:${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "acr-tag=${{ env.ACR_IMAGE }}:${SHORT_SHA}" >> $GITHUB_OUTPUT
 
       - name: Build and push Docker image
         id: build
@@ -61,6 +74,8 @@ jobs:
           tags: |
             ${{ steps.meta.outputs.tag }}
             ${{ env.IMAGE }}:latest
+            ${{ steps.meta.outputs.acr-tag }}
+            ${{ env.ACR_IMAGE }}:latest
 
   deploy:
     name: Update Container App
@@ -80,7 +95,14 @@ jobs:
           az containerapp update \
             --name tdo-app-api-dev \
             --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-            --image ${{ needs.build-and-push.outputs.image-tag }}
+            --image ${{ needs.build-and-push.outputs.acr-image-tag }}
+
+      - name: Update harvest job template image
+        run: |
+          az containerapp job update \
+            --name tdo-job-harvest-dev \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --image ${{ needs.build-and-push.outputs.acr-image-tag }} || true
 
       - name: Smoke test
         run: |
