@@ -53,7 +53,9 @@ jobs:
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
       - name: Log in to Azure Container Registry
-        run: az acr login --name tdoacrdev
+        run: |
+          TOKEN=$(az acr login --name tdoacrdev --expose-token --output tsv --query accessToken)
+          echo "$TOKEN" | docker login tdoacrdev.azurecr.io --username 00000000-0000-0000-0000-000000000000 --password-stdin
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
