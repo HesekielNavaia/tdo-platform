@@ -89,17 +89,19 @@ jobs:
 
       - name: Update Container App revision
         run: |
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-8)
           az containerapp update \
             --name tdo-app-api-dev \
             --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-            --image ${{ needs.build-and-push.outputs.acr-image-tag }}
+            --image ${{ env.ACR_IMAGE }}:${SHORT_SHA}
 
       - name: Update harvest job template image
         run: |
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-8)
           az containerapp job update \
             --name tdo-job-harvest-dev \
             --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-            --image ${{ needs.build-and-push.outputs.acr-image-tag }} || true
+            --image ${{ env.ACR_IMAGE }}:${SHORT_SHA} || true
 
       - name: Smoke test
         run: |
