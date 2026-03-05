@@ -23,12 +23,56 @@ from src.models.mvm import (
 
 log = structlog.get_logger(__name__)
 
+
+def _run_migrations() -> None:
+    """Run alembic upgrade head on startup if POSTGRES_FQDN is configured."""
+    fqdn = os.environ.get("POSTGRES_FQDN")
+    db_name = os.environ.get("POSTGRES_DB")
+    client_id = os.environ.get("AZURE_CLIENT_ID")
+    if not (fqdn and db_name and client_id):
+        log.info("migrations_skipped", reason="POSTGRES_FQDN not configured")
+        return
+    try:
+        import urllib.parse
+        from azure.identity import ManagedIdentityCredential
+        from alembic import command
+        from alembic.config import Config
+
+        credential = ManagedIdentityCredential(client_id=client_id)
+        token = credential.get_token(
+            "https://ossrdbms-aad.database.windows.net/.default"
+        )
+        username = os.environ.get("POSTGRES_USER", "tdo-id-api-dev")
+        encoded = urllib.parse.quote(token.token, safe="")
+        sync_url = (
+            f"postgresql+psycopg2://{username}@{fqdn}/{db_name}"
+            f"?password={encoded}&sslmode=require"
+        )
+        alembic_cfg = Config("/app/alembic.ini")
+        alembic_cfg.set_main_option("sqlalchemy.url", sync_url)
+        command.upgrade(alembic_cfg, "head")
+        log.info("migrations_complete")
+    except Exception as exc:
+        # Log but don't crash — the API may still be usable if schema already exists
+        log.warning("migrations_failed", error=str(exc))
+
+
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def lifespan(app):
+    _run_migrations()
+    yield
+
+
 app = FastAPI(
     title="TDO — Trusted Data Observatory",
     description="Metadata discovery API for official statistical datasets",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # CORS middleware
