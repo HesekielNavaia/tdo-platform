@@ -107,10 +107,21 @@ class OECDAdapter(BasePortalAdapter):
                 if self._is_subnational_or_experimental(df_id, name_en):
                     resource_type = "table"
 
+                # SDMX IDs may be compound ("DSD_REG_ECO@DF_GDP"); the Data
+                # Explorer expects just the dataflow part after "@" in df[id].
+                df_id_for_url = df_id.split("@")[-1] if "@" in df_id else df_id
+                dataset_url = (
+                    "https://data-explorer.oecd.org/vis"
+                    "?df[ds]=dsDisseminateFinalDMZ"
+                    f"&df[id]={df_id_for_url}"
+                    f"&df[ag]={agency_id}"
+                )
+
                 results.append({
                     "dataflow_id": df_id,
                     "agencyID": agency_id,
                     "resource_type": resource_type,
+                    "_dataset_url": dataset_url,
                     "data": {
                         "dataflows": [{
                             "id": df_id,

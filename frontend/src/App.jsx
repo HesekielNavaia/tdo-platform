@@ -275,7 +275,8 @@ function inferDatasetUrl(r) {
     return `https://data.worldbank.org/indicator/${encodeURIComponent(code)}`;
   }
   if (portal.includes("oecd")) {
-    return `https://stats.oecd.org/index.aspx?queryid=${encodeURIComponent(sourceId)}`;
+    const dfId = sourceId.includes("@") ? sourceId.split("@").pop() : sourceId;
+    return `https://data-explorer.oecd.org/vis?df[ds]=dsDisseminateFinalDMZ&df[id]=${encodeURIComponent(dfId)}&df[ag]=OECD`;
   }
   if (portal.includes("un.org") || portal.includes("data.un.org")) {
     return `https://data.un.org/Data.aspx?d=${encodeURIComponent(sourceId)}`;
