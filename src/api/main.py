@@ -170,7 +170,16 @@ def _diversify(results: list[SearchResult], limit: int, per_portal_min: int = 2)
     """
     by_portal: dict[str, list[SearchResult]] = {}
     for r in results:
-        pid = r.record.source_portal or "unknown"
+        # Normalise stored URL portal_id to a stable short key for grouping
+        raw = r.record.source_portal or "unknown"
+        pid = (
+            "statistics_finland" if "stat.fi" in raw else
+            "world_bank"         if "worldbank" in raw else
+            "eurostat"           if "eurostat" in raw else
+            "oecd"               if "oecd" in raw else
+            "un_data"            if "un.org" in raw else
+            raw
+        )
         by_portal.setdefault(pid, []).append(r)
 
     selected: list[SearchResult] = []
@@ -313,7 +322,7 @@ async def list_datasets(
             params["publisher"] = f"%{publisher}%"
         if portal:
             filter_parts.append("portal_id = :portal")
-            params["portal"] = portal
+            params["portal"] = _PORTAL_ID_MAP.get(portal, portal)
         if geo:
             geo_list = [g.strip() for g in geo.split(",") if g.strip()]
             filter_parts.append("geographic_coverage && :geo")
@@ -511,21 +520,189 @@ class QueryRequest:
 from pydantic import BaseModel
 
 class QueryBody(BaseModel):
-    question: str
+    question: str | None = None
+    query: str | None = None   # alias accepted for backwards compat
+    portal: str | None = None
+    limit: int = 10
+
+
+# Maps user-facing short portal names to stored portal_id values in DB
+_PORTAL_ID_MAP: dict[str, str] = {
+    "statistics_finland": "https://stat.fi",
+    "statfin":            "https://stat.fi",
+    "world_bank":         "https://data.worldbank.org",
+    "worldbank":          "https://data.worldbank.org",
+    "eurostat":           "https://ec.europa.eu/eurostat",
+    "oecd":               "https://stats.oecd.org",
+    "un_data":            "https://data.un.org",
+    "undata":             "https://data.un.org",
+}
+
+
+async def _openai_summarise(question: str, snippets: list[str]) -> str:
+    """Call Azure OpenAI to produce a brief summary over search snippets."""
+    endpoint = os.environ.get("OPENAI_ENDPOINT", "")
+    api_key  = os.environ.get("OPENAI_API_KEY", "")
+    model    = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+    if not endpoint or not api_key:
+        return ""
+    import httpx
+    system = (
+        "You are a helpful assistant for a statistical data catalogue. "
+        "Given a user question and a list of matching dataset titles/descriptions, "
+        "write a single concise paragraph (2-3 sentences) explaining which datasets "
+        "are most relevant and why. Be factual. Never invent data."
+    )
+    user = f"Question: {question}\n\nMatching datasets:\n" + "\n".join(
+        f"- {s}" for s in snippets[:10]
+    )
+    chat_url = endpoint.rstrip("/")
+    if "/chat/completions" not in chat_url:
+        chat_url = chat_url + f"/openai/deployments/{model}/chat/completions?api-version=2024-02-01"
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                chat_url,
+                headers={"api-key": api_key, "Content-Type": "application/json"},
+                json={
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user",   "content": user},
+                    ],
+                    "max_tokens": 200,
+                    "temperature": 0.3,
+                },
+            )
+            resp.raise_for_status()
+            return resp.json()["choices"][0]["message"]["content"].strip()
+    except Exception as exc:
+        log.warning("openai_summary_failed", error=str(exc))
+        return ""
 
 
 @app.post("/v1/query")
 async def natural_language_query(body: QueryBody):
     """
-    Decompose a natural language question into structured /datasets params
-    using Phi-4 and return structured results + natural language summary.
+    Semantic search + LLM summary.
+    Accepts: { question, portal, limit }
+    Returns: { question, results[], summary }
     """
-    return {
-        "question": body.question,
-        "structured_query": {},
-        "results": [],
-        "summary": "Query engine not yet connected to LLM endpoint.",
-    }
+    question = (body.question or body.query or "").strip()
+    if not question:
+        return {"question": "", "results": [], "summary": ""}
+
+    limit  = max(1, min(body.limit, 50))
+    portal = body.portal
+
+    db_url = _build_db_url()
+    if not db_url:
+        return {"question": question, "results": [], "summary": "Database not configured."}
+
+    # Map short portal name to stored URL value
+    portal_filter_val = _PORTAL_ID_MAP.get(portal or "", portal) if portal else None
+
+    try:
+        from sqlalchemy import text
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        engine = create_async_engine(db_url, echo=False)
+        results = []
+
+        query_vec = await _embed_query(question)
+        if query_vec is not None:
+            vec_str = "[" + ",".join(str(x) for x in query_vec) + "]"
+            where = "embedding_vec IS NOT NULL AND confidence_score >= 0.3"
+            params: dict = {"vec": vec_str, "limit": limit * 3}
+            if portal_filter_val:
+                where += " AND portal_id = :portal"
+                params["portal"] = portal_filter_val
+            try:
+                sql = text(f"""
+                    SELECT id, source_id, portal_id, title, description, dataset_url,
+                           publisher, confidence_score,
+                           1 - (embedding_vec <=> CAST(:vec AS vector)) AS score
+                    FROM datasets
+                    WHERE {where}
+                    ORDER BY embedding_vec <=> CAST(:vec AS vector)
+                    LIMIT :limit
+                """)
+                async with engine.connect() as conn:
+                    rows = await conn.execute(sql, params)
+                    results = [dict(r) for r in rows.mappings()]
+            except Exception as exc:
+                log.warning("query_semantic_failed", error=str(exc))
+
+        # FTS fallback
+        if not results:
+            where = "confidence_score >= 0.3"
+            params2: dict = {"q": question, "limit": limit * 3}
+            if portal_filter_val:
+                where += " AND portal_id = :portal"
+                params2["portal"] = portal_filter_val
+            try:
+                sql2 = text(f"""
+                    SELECT id, source_id, portal_id, title, description, dataset_url,
+                           publisher, confidence_score,
+                           ts_rank(fts_doc, plainto_tsquery('english', :q)) AS score
+                    FROM datasets
+                    WHERE {where} AND fts_doc @@ plainto_tsquery('english', :q)
+                    ORDER BY score DESC
+                    LIMIT :limit
+                """)
+                async with engine.connect() as conn:
+                    rows2 = await conn.execute(sql2, params2)
+                    results = [dict(r) for r in rows2.mappings()]
+            except Exception as exc:
+                log.warning("query_fts_failed", error=str(exc))
+
+        await engine.dispose()
+
+        # Apply diversity then truncate
+        if results and not portal_filter_val:
+            from collections import defaultdict
+            by_portal: dict[str, list] = defaultdict(list)
+            for r in results:
+                by_portal[r.get("portal_id", "")].append(r)
+            diverse: list = []
+            seen: set = set()
+            portals_sorted = sorted(by_portal.keys(), key=lambda p: by_portal[p][0]["score"] or 0, reverse=True)
+            for pid in portals_sorted:
+                for r in by_portal[pid][:2]:
+                    if r["id"] not in seen:
+                        diverse.append(r)
+                        seen.add(r["id"])
+            for r in results:
+                if len(diverse) >= limit:
+                    break
+                if r["id"] not in seen:
+                    diverse.append(r)
+                    seen.add(r["id"])
+            results = sorted(diverse, key=lambda r: r.get("score") or 0, reverse=True)[:limit]
+        else:
+            results = results[:limit]
+
+        formatted = [
+            {
+                "id":          str(r["id"]),
+                "title":       r.get("title") or "",
+                "portal":      r.get("portal_id") or "",
+                "url":         r.get("dataset_url") or "",
+                "description": r.get("description") or "",
+                "publisher":   r.get("publisher") or "",
+                "score":       round(float(r.get("score") or 0), 4),
+            }
+            for r in results
+        ]
+
+        # LLM summary (non-blocking best-effort)
+        snippets = [f"{r['title']}: {(r['description'] or '')[:120]}" for r in results[:8]]
+        summary = await _openai_summarise(question, snippets) if snippets else ""
+
+        return {"question": question, "results": formatted, "summary": summary}
+
+    except Exception as exc:
+        log.warning("query_failed", error=str(exc))
+        return {"question": question, "results": [], "summary": ""}
 
 
 # ---------------------------------------------------------------------------

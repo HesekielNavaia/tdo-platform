@@ -15,12 +15,14 @@ from src.pipeline.mapping_tables import PORTAL_DEFAULTS
 
 log = structlog.get_logger(__name__)
 
-STATFIN_BASE_URL = "https://pxdata.stat.fi:443/PxWeb/api/v1/en"
+STATFIN_API_BASE  = "https://pxdata.stat.fi/PxWeb/api/v1/en"
+STATFIN_BASE_URL  = f"{STATFIN_API_BASE}/StatFin"   # start traversal here
+STATFIN_VIEW_BASE = "https://pxdata.stat.fi/PxWeb/pxweb/en/StatFin"
 
 
 class StatisticsFinlandAdapter(BasePortalAdapter):
     portal_id = "statistics_finland"
-    base_url = STATFIN_BASE_URL
+    base_url = STATFIN_API_BASE
     rate_limit_rps = 0.5  # StatFin 429s at ~1 rps; 0.5 rps (2s gap) stays under their limit
     adapter_type = "api"
 
@@ -29,35 +31,18 @@ class StatisticsFinlandAdapter(BasePortalAdapter):
 
     async def fetch_catalogue(self) -> AsyncIterator[RawRecord]:
         """
-        Recursively traverse the PxWeb folder tree to discover all leaf datasets.
-        The root URL returns databases (dbid/text), each database then yields
-        folders (type l/h) and leaf tables (type t).
+        Recursively traverse the StatFin PxWeb folder tree starting at
+        /StatFin, discovering all leaf table datasets.
         """
         async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-            # Step 1: fetch top-level databases
-            try:
-                resp = await self._rate_limited_get(client, self.base_url)
-                databases = resp.json()
-            except Exception as e:
-                log.error("statfin_root_error", error=str(e))
-                return
-
-            if not isinstance(databases, list):
-                return
-
-            for db in databases:
-                db_id = db.get("dbid", "")
-                if not db_id:
-                    continue
-                # Step 2: traverse each database
-                async for record in self._traverse_node(client, db_id):
-                    yield record
+            async for record in self._traverse_node(client, "StatFin"):
+                yield record
 
     async def _traverse_node(
         self, client: httpx.AsyncClient, path: str
     ) -> AsyncIterator[RawRecord]:
-        """Recursively traverse a PxWeb catalogue node within a database."""
-        url = f"{self.base_url}/{path}".rstrip("/")
+        """Recursively traverse a PxWeb catalogue node."""
+        url = f"{STATFIN_API_BASE}/{path}".rstrip("/")
         try:
             resp = await self._rate_limited_get(client, url)
             items = resp.json()
@@ -88,19 +73,21 @@ class StatisticsFinlandAdapter(BasePortalAdapter):
     async def fetch_record(self, source_id: str) -> RawRecord:
         """
         Fetch metadata for a single PxWeb table.
-        source_id is the path relative to the base URL.
+        source_id is the path under /StatFin, e.g. "StatFin/matk/statfin_matk_pxt_117s.px"
         """
-        url = f"{self.base_url}/{source_id.lstrip('/')}"
+        url = f"{STATFIN_API_BASE}/{source_id.lstrip('/')}"
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await self._rate_limited_get(client, url)
             raw = resp.json()
 
-        # Enrich with portal defaults and source path
+        # The user-facing URL uses the pxweb viewer, not the API path
+        # e.g. https://pxdata.stat.fi/PxWeb/pxweb/en/StatFin/matk/statfin_matk_pxt_117s.px
+        viewer_path = source_id.lstrip("/")
         enriched = {
             **self.get_portal_defaults(),
             "pxweb_path": source_id,
             "pxweb_response": raw,
-            "_dataset_url": f"https://pxdata.stat.fi/PxWeb/pxweb/en/{source_id.lstrip('/')}",
+            "_dataset_url": f"{STATFIN_VIEW_BASE}/{viewer_path.removeprefix('StatFin/')}",
         }
 
         # Extract the key metadata fields from the PxWeb response

@@ -530,7 +530,7 @@ export default function TDOApp() {
     setAiLoading(true);
     apiFetch("/v1/query", {
       method: "POST",
-      body: JSON.stringify({ query: qUsed }),
+      body: JSON.stringify({ question: qUsed }),
     })
       .then(data => {
         setAiAnswer(data.summary || data.answer || "");
