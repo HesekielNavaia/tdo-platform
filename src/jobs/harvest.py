@@ -72,11 +72,18 @@ def _get_kv_secret(secret_name: str) -> str | None:
 
 
 async def main() -> None:
-    portal_short = os.environ.get("PORTAL_ID", "").lower().strip()
+    # Accept portal ID from CLI arg (first positional) or PORTAL_ID env var.
+    # CLI arg takes precedence so the job can be started with:
+    #   az containerapp job start --command python --args -m src.jobs.harvest statfin
+    if len(sys.argv) > 1:
+        portal_short = sys.argv[1].lower().strip()
+    else:
+        portal_short = os.environ.get("PORTAL_ID", "").lower().strip()
+
     portal_id = PORTAL_MAP.get(portal_short, portal_short)
 
     if not portal_id:
-        log.error("missing_portal_id", msg="Set PORTAL_ID env var (e.g. statfin, eurostat)")
+        log.error("missing_portal_id", msg="Pass portal as arg or set PORTAL_ID env var")
         sys.exit(1)
 
     log.info("harvest_job_starting", portal_id=portal_id)
