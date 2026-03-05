@@ -74,6 +74,34 @@ Rules you must follow without exception:
    weighted by field importance (title=0.2, description=0.15,
    publisher=0.15, geographic_coverage=0.1, temporal=0.1, rest=0.05 each)."""
 
+DESCRIPTION_EXTRACT_PROMPT = """You are a metadata analyst specialising in official statistical datasets.
+Extract the following fields from the dataset description text provided.
+Return ONLY valid JSON. Do not include any preamble or explanation.
+
+Fields to extract:
+- time_series_length: human-readable length/span of the time series (e.g. "50 years", "1970–2023"); null if not mentioned
+- methodology_url: a URL pointing to methodology documentation, if explicitly stated in the text; null otherwise
+- related_datasets: list of dataset names or identifiers explicitly mentioned as related/linked; [] if none
+- subject_classification: list of subject areas, topics, or statistical domains mentioned (e.g. ["labour market", "employment"]);  [] if none
+- unit_of_measure: the unit used for observations (e.g. "persons", "EUR millions", "index points"); null if not stated
+- observation_count_estimate: integer estimate of total observations/data points if mentioned (e.g. 15000); null if not mentioned
+- field_confidence: object mapping each field name to a confidence score 0.0–1.0 reflecting how clearly it is stated
+
+Rules:
+- Only extract from the text provided — do not invent values.
+- methodology_url must be a syntactically valid URL or null.
+- observation_count_estimate must be an integer or null."""
+
+# Description-derived fields with their DB/MVM field names
+DESCRIPTION_DERIVED_FIELDS = {
+    "time_series_length",
+    "methodology_url",
+    "related_datasets",
+    "subject_classification",
+    "unit_of_measure",
+    "observation_count_estimate",
+}
+
 
 class HarmoniserConfig:
     def __init__(
@@ -192,6 +220,21 @@ class Harmoniser:
             field_confidence.update(fallback_confidence)
             confidence = self._calc_confidence(field_confidence)
 
+        # Extract additional fields from description text via LLM
+        desc_extracted: dict[str, Any] = {}
+        desc_confidences: dict[str, float] = {}
+        description_text = mapped.get("description")
+        if description_text and (self.config.phi4_endpoint or self.config.openai_endpoint):
+            endpoint = self.config.phi4_endpoint or self.config.openai_endpoint
+            api_key = self.config.phi4_api_key if self.config.phi4_endpoint else self.config.openai_api_key
+            model = "phi-4" if self.config.phi4_endpoint else self.config.openai_model
+            desc_extracted, desc_confidences = await self._extract_from_description(
+                description_text, endpoint, api_key, model
+            )
+            field_confidence.update({
+                f"{k}_confidence": v for k, v in desc_confidences.items()
+            })
+
         # Compute quality scores
         completeness = self._calc_completeness(mapped)
         freshness = self._calc_freshness(
@@ -229,6 +272,19 @@ class Harmoniser:
                 metadata_standard=schema_type if schema_type in (
                     "SDMX", "DCAT", "DublinCore", "DDI"
                 ) else "unknown",
+                # LLM-extracted from description
+                time_series_length=desc_extracted.get("time_series_length"),
+                time_series_length_confidence=desc_confidences.get("time_series_length"),
+                methodology_url=desc_extracted.get("methodology_url"),
+                methodology_url_confidence=desc_confidences.get("methodology_url"),
+                related_datasets=desc_extracted.get("related_datasets") or [],
+                related_datasets_confidence=desc_confidences.get("related_datasets"),
+                subject_classification=desc_extracted.get("subject_classification") or [],
+                subject_classification_confidence=desc_confidences.get("subject_classification"),
+                unit_of_measure=desc_extracted.get("unit_of_measure"),
+                unit_of_measure_confidence=desc_confidences.get("unit_of_measure"),
+                observation_count_estimate=desc_extracted.get("observation_count_estimate"),
+                observation_count_estimate_confidence=desc_confidences.get("observation_count_estimate"),
                 confidence_score=round(min(1.0, max(0.0, confidence)), 4),
                 completeness_score=round(min(1.0, max(0.0, completeness)), 4),
                 freshness_score=round(min(1.0, max(0.0, freshness)), 4),
@@ -405,6 +461,65 @@ class Harmoniser:
         except Exception as e:
             log.error("llm_call_error", model=model, error=str(e))
         return {}, {}, {}
+
+    async def _extract_from_description(
+        self,
+        description: str,
+        endpoint: str,
+        api_key: str | None,
+        model: str,
+    ) -> tuple[dict[str, Any], dict[str, float]]:
+        """
+        Call LLM to extract DESCRIPTION_DERIVED_FIELDS from description text.
+        Returns (extracted_values, field_confidences).
+        """
+        try:
+            import httpx
+
+            messages = [
+                {"role": "system", "content": DESCRIPTION_EXTRACT_PROMPT},
+                {"role": "user", "content": f"Dataset description:\n\n{description}"},
+            ]
+            headers = {"Content-Type": "application/json"}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                for attempt in range(3):
+                    try:
+                        resp = await client.post(
+                            endpoint,
+                            json={"model": model, "messages": messages},
+                            headers=headers,
+                        )
+                        resp.raise_for_status()
+                        data = resp.json()
+                        content = data["choices"][0]["message"]["content"]
+                        parsed = json.loads(content)
+                        confidences: dict[str, float] = parsed.pop("field_confidence", {})
+                        # Keep only expected fields; coerce types
+                        result: dict[str, Any] = {}
+                        for field in DESCRIPTION_DERIVED_FIELDS:
+                            val = parsed.get(field)
+                            if field == "observation_count_estimate" and val is not None:
+                                try:
+                                    val = int(val)
+                                except (ValueError, TypeError):
+                                    val = None
+                            if field in ("related_datasets", "subject_classification"):
+                                result[field] = val if isinstance(val, list) else []
+                            else:
+                                result[field] = val
+                        return result, {k: float(v) for k, v in confidences.items() if k in DESCRIPTION_DERIVED_FIELDS}
+                    except Exception as e:
+                        if attempt == 2:
+                            log.error("description_extract_failed", model=model, error=str(e))
+                            return {}, {}
+                        import asyncio
+                        await asyncio.sleep(2 ** attempt)
+        except Exception as e:
+            log.error("description_extract_error", model=model, error=str(e))
+        return {}, {}
 
     def _calc_confidence(self, field_confidence: dict[str, float]) -> float:
         """Weighted confidence score from per-field confidences."""

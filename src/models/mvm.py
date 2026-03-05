@@ -46,6 +46,20 @@ class MVMRecord(BaseModel):
     provenance: str | None = None
     metadata_standard: Literal["SDMX", "DCAT", "DublinCore", "DDI", "other", "unknown"]
 
+    # LLM-extracted from description text
+    time_series_length: str | None = None
+    time_series_length_confidence: float | None = Field(None, ge=0.0, le=1.0)
+    methodology_url: str | None = None
+    methodology_url_confidence: float | None = Field(None, ge=0.0, le=1.0)
+    related_datasets: list[str] = []
+    related_datasets_confidence: float | None = Field(None, ge=0.0, le=1.0)
+    subject_classification: list[str] = []
+    subject_classification_confidence: float | None = Field(None, ge=0.0, le=1.0)
+    unit_of_measure: str | None = None
+    unit_of_measure_confidence: float | None = Field(None, ge=0.0, le=1.0)
+    observation_count_estimate: int | None = None
+    observation_count_estimate_confidence: float | None = Field(None, ge=0.0, le=1.0)
+
     # Trust & quality signals
     confidence_score: float = Field(..., ge=0.0, le=1.0)
     completeness_score: float = Field(..., ge=0.0, le=1.0)
