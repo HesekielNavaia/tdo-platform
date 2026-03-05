@@ -128,6 +128,110 @@ async def request_id_middleware(request: Request, call_next):
 # GET /v1/datasets
 # ---------------------------------------------------------------------------
 
+async def _embed_query(query: str) -> list[float] | None:
+    """Embed a query string using the configured embedder endpoint."""
+    endpoint = os.environ.get("EMBEDDING_ENDPOINT", "")
+    api_key = os.environ.get("EMBEDDING_API_KEY", "")
+    if not endpoint:
+        return None
+    import httpx
+    try:
+        if not endpoint.rstrip("/").endswith(("/v1/embeddings", "/score")):
+            endpoint = endpoint.rstrip("/") + "/v1/embeddings"
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                endpoint,
+                json={"input": [query], "model": "multilingual-e5-large"},
+                headers=headers,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if "data" in data:
+                return data["data"][0]["embedding"]
+            if isinstance(data, list):
+                return data[0]
+    except Exception as exc:
+        log.warning("query_embed_failed", error=str(exc))
+    return None
+
+
+def _row_to_search_result(row, similarity: float, channel: str) -> SearchResult:
+    """Convert a DB row mapping to a SearchResult."""
+    from src.models.mvm import MVMRecord, SearchResult as SR
+    from datetime import timezone
+
+    def _str(v) -> str | None:
+        return str(v) if v is not None else None
+
+    def _lst(v) -> list[str]:
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return [str(x) for x in v]
+        return []
+
+    def _float(v, default=0.0) -> float:
+        try:
+            return float(v) if v is not None else default
+        except Exception:
+            return default
+
+    ingestion_ts = row["ingestion_timestamp"]
+    from datetime import datetime
+    if ingestion_ts is None:
+        ingestion_ts = datetime.now(timezone.utc)
+    elif not getattr(ingestion_ts, "tzinfo", None):
+        ingestion_ts = ingestion_ts.replace(tzinfo=timezone.utc)
+
+    pub_type = row.get("publisher_type") or "other"
+    if pub_type not in ("NSO", "IO", "NGO", "other"):
+        pub_type = "other"
+
+    access_type = row.get("access_type") or "open"
+    if access_type not in ("open", "restricted", "embargoed"):
+        access_type = "open"
+
+    meta_std = row.get("metadata_standard") or "unknown"
+    if meta_std not in ("SDMX", "DCAT", "DublinCore", "DDI", "ISO19115", "DataCite", "other", "unknown"):
+        meta_std = "unknown"
+
+    mvm = MVMRecord(
+        id=str(row["id"]),
+        source_id=str(row["source_id"]),
+        resource_type=row.get("resource_type") or "dataset",
+        title=row.get("title") or "(no title)",
+        description=_str(row.get("description")),
+        publisher=row.get("publisher") or "Unknown",
+        publisher_type=pub_type,
+        source_portal=str(row.get("portal_id") or row.get("source_portal") or ""),
+        dataset_url=_str(row.get("dataset_url")),
+        keywords=_lst(row.get("keywords")),
+        themes=_lst(row.get("themes")),
+        geographic_coverage=_lst(row.get("geographic_coverage")),
+        temporal_coverage_start=_str(row.get("temporal_coverage_start")),
+        temporal_coverage_end=_str(row.get("temporal_coverage_end")),
+        languages=_lst(row.get("languages")),
+        update_frequency=row.get("update_frequency"),
+        last_updated=_str(row.get("last_updated")),
+        access_type=access_type,
+        access_conditions=_str(row.get("access_conditions")),
+        license=_str(row.get("license")),
+        formats=_lst(row.get("formats")),
+        contact_point=_str(row.get("contact_point")),
+        provenance=_str(row.get("provenance")),
+        metadata_standard=meta_std,
+        confidence_score=_float(row.get("confidence_score"), 0.5),
+        completeness_score=_float(row.get("completeness_score"), 0.5),
+        freshness_score=_float(row.get("freshness_score"), 0.5),
+        link_healthy=row.get("link_healthy"),
+        ingestion_timestamp=ingestion_ts,
+    )
+    return SearchResult(record=mvm, similarity_score=min(1.0, max(0.0, similarity)), search_channel=channel)
+
+
 @app.get("/v1/datasets", response_model=list[SearchResult])
 async def list_datasets(
     q: Optional[str] = Query(None, description="Natural language search query"),
@@ -143,22 +247,119 @@ async def list_datasets(
     offset: int = Query(0, ge=0),
 ):
     """Search datasets using hybrid semantic + keyword search."""
-    filters = SearchFilters(
-        geo=geo.split(",") if geo else None,
-        theme=theme.split(",") if theme else None,
-        publisher=publisher,
-        format=format,
-        access=access,
-        resource_type=resource_type,
-        updated_after=updated_after,
-        min_confidence=min_confidence,
-        limit=limit,
-        offset=offset,
-    )
+    db_url = _build_db_url()
+    if not db_url:
+        return []
 
-    # In production this would use the real search engine
-    # Returning empty list for now (wired in docker-compose / integration)
-    return []
+    try:
+        from sqlalchemy import text
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        engine = create_async_engine(db_url, echo=False)
+
+        # Build filter clauses
+        filter_parts = ["confidence_score >= :min_confidence"]
+        params: dict = {"min_confidence": min_confidence, "limit": limit, "offset": offset}
+
+        if access:
+            filter_parts.append("access_type = :access")
+            params["access"] = access
+        if resource_type:
+            filter_parts.append("resource_type = :resource_type")
+            params["resource_type"] = resource_type
+        if publisher:
+            filter_parts.append("publisher ILIKE :publisher")
+            params["publisher"] = f"%{publisher}%"
+        if geo:
+            geo_list = [g.strip() for g in geo.split(",") if g.strip()]
+            filter_parts.append("geographic_coverage && :geo")
+            params["geo"] = geo_list
+        if theme:
+            theme_list = [t.strip() for t in theme.split(",") if t.strip()]
+            filter_parts.append("themes && :themes")
+            params["themes"] = theme_list
+        if format:
+            filter_parts.append(":fmt = ANY(formats)")
+            params["fmt"] = format
+        if updated_after:
+            filter_parts.append("last_updated >= :updated_after")
+            params["updated_after"] = updated_after
+
+        where = " AND ".join(filter_parts)
+        results = []
+
+        async with engine.connect() as conn:
+            # Try semantic search first
+            if q:
+                query_vec = await _embed_query(q)
+                if query_vec is not None:
+                    try:
+                        vec_str = "[" + ",".join(str(x) for x in query_vec) + "]"
+                        sql = text(f"""
+                            SELECT *, 1 - (embedding_vec <=> :vec::vector) AS similarity
+                            FROM datasets
+                            WHERE {where} AND embedding_vec IS NOT NULL
+                            ORDER BY embedding_vec <=> :vec::vector
+                            LIMIT :limit OFFSET :offset
+                        """)
+                        rows = await conn.execute(sql, {**params, "vec": vec_str})
+                        for row in rows.mappings():
+                            sim = float(row.get("similarity") or 0.5)
+                            results.append(_row_to_search_result(row, sim, "semantic"))
+                        if results:
+                            await engine.dispose()
+                            return results
+                    except Exception as exc:
+                        log.warning("semantic_search_failed", error=str(exc))
+
+            # Keyword fallback using FTS or ILIKE
+            if q:
+                try:
+                    sql = text(f"""
+                        SELECT *, ts_rank(fts_doc, plainto_tsquery('english', :q)) AS similarity
+                        FROM datasets
+                        WHERE {where} AND fts_doc @@ plainto_tsquery('english', :q)
+                        ORDER BY similarity DESC
+                        LIMIT :limit OFFSET :offset
+                    """)
+                    rows = await conn.execute(sql, {**params, "q": q})
+                    for row in rows.mappings():
+                        sim = min(1.0, float(row.get("similarity") or 0.3))
+                        results.append(_row_to_search_result(row, sim, "keyword"))
+                except Exception:
+                    # FTS column may not exist yet — ILIKE fallback
+                    kw = f"%{q}%"
+                    sql = text(f"""
+                        SELECT *, confidence_score AS similarity
+                        FROM datasets
+                        WHERE {where} AND (title ILIKE :kw OR description ILIKE :kw)
+                        ORDER BY confidence_score DESC
+                        LIMIT :limit OFFSET :offset
+                    """)
+                    rows = await conn.execute(sql, {**params, "kw": kw})
+                    for row in rows.mappings():
+                        sim = float(row.get("similarity") or 0.5)
+                        results.append(_row_to_search_result(row, sim, "keyword"))
+            else:
+                # No query — return top records by confidence
+                sql = text(f"""
+                    SELECT *, confidence_score AS similarity
+                    FROM datasets
+                    WHERE {where}
+                    ORDER BY confidence_score DESC
+                    LIMIT :limit OFFSET :offset
+                """)
+                rows = await conn.execute(sql, params)
+                for row in rows.mappings():
+                    sim = float(row.get("similarity") or 0.5)
+                    results.append(_row_to_search_result(row, sim, "browse"))
+
+        await engine.dispose()
+        return results
+
+    except Exception as exc:
+        log.warning("search_failed", error=str(exc))
+        return []
 
 
 # ---------------------------------------------------------------------------
