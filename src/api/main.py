@@ -563,7 +563,7 @@ async def _openai_summarise(question: str, snippets: list[str]) -> str:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(
                 chat_url,
-                headers={"api-key": api_key, "Content-Type": "application/json"},
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 json={
                     "messages": [
                         {"role": "system", "content": system},
