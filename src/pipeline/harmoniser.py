@@ -235,8 +235,7 @@ class Harmoniser:
                 f"{k}_confidence": v for k, v in desc_confidences.items()
             })
 
-        # Compute quality scores
-        completeness = self._calc_completeness(mapped)
+        # Compute freshness (doesn't depend on portal defaults)
         freshness = self._calc_freshness(
             mapped.get("last_updated"), mapped.get("update_frequency")
         )
@@ -286,7 +285,7 @@ class Harmoniser:
                 observation_count_estimate=desc_extracted.get("observation_count_estimate"),
                 observation_count_estimate_confidence=desc_confidences.get("observation_count_estimate"),
                 confidence_score=round(min(1.0, max(0.0, confidence)), 4),
-                completeness_score=round(min(1.0, max(0.0, completeness)), 4),
+                completeness_score=0.0,  # calculated below from actual record values
                 freshness_score=round(min(1.0, max(0.0, freshness)), 4),
                 link_healthy=None,
                 ingestion_timestamp=datetime.now(timezone.utc),
@@ -309,6 +308,22 @@ class Harmoniser:
                 ingestion_timestamp=datetime.now(timezone.utc),
             )
             confidence = 0.0
+
+        # Compute completeness from the fully-resolved record (after portal defaults applied)
+        completeness = self._calc_completeness({
+            "title":                    None if mvm.title in ("Untitled", "Validation Error — see processing record") else mvm.title,
+            "description":              mvm.description,
+            "publisher":                None if mvm.publisher == "Unknown" else mvm.publisher,
+            "geographic_coverage":      mvm.geographic_coverage,
+            "temporal_coverage_start":  mvm.temporal_coverage_start,
+            "update_frequency":         mvm.update_frequency,
+            "last_updated":             mvm.last_updated,
+            "access_type":              mvm.access_type,
+            "license":                  mvm.license,
+            "formats":                  mvm.formats,
+            "keywords":                 mvm.keywords,
+        })
+        mvm = mvm.model_copy(update={"completeness_score": round(min(1.0, max(0.0, completeness)), 4)})
 
         # Flag for review if confidence is below threshold
         flagged = mvm.confidence_score < self.config.review_threshold

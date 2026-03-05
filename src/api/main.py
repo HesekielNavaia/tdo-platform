@@ -170,14 +170,15 @@ def _diversify(results: list[SearchResult], limit: int, per_portal_min: int = 2)
     """
     by_portal: dict[str, list[SearchResult]] = {}
     for r in results:
-        # Normalise stored URL portal_id to a stable short key for grouping
+        # Normalise portal_id to a stable short key for grouping.
+        # Handles both old URL-format values and new short names.
         raw = r.record.source_portal or "unknown"
         pid = (
-            "statistics_finland" if "stat.fi" in raw else
-            "world_bank"         if "worldbank" in raw else
-            "eurostat"           if "eurostat" in raw else
-            "oecd"               if "oecd" in raw else
-            "un_data"            if "un.org" in raw else
+            "statfin"   if raw in ("statfin", "statistics_finland") or "stat.fi" in raw else
+            "worldbank" if raw in ("worldbank", "world_bank") or ("worldbank" in raw and "stat" not in raw) else
+            "eurostat"  if raw == "eurostat" or "eurostat" in raw else
+            "oecd"      if raw == "oecd" or ("oecd" in raw and "un" not in raw) else
+            "undata"    if raw in ("undata", "un_data") or "un.org" in raw else
             raw
         )
         by_portal.setdefault(pid, []).append(r)
@@ -526,16 +527,16 @@ class QueryBody(BaseModel):
     limit: int = 10
 
 
-# Maps user-facing short portal names to stored portal_id values in DB
+# Maps user-facing portal name variants to canonical short names stored in DB
 _PORTAL_ID_MAP: dict[str, str] = {
-    "statistics_finland": "https://stat.fi",
-    "statfin":            "https://stat.fi",
-    "world_bank":         "https://data.worldbank.org",
-    "worldbank":          "https://data.worldbank.org",
-    "eurostat":           "https://ec.europa.eu/eurostat",
-    "oecd":               "https://stats.oecd.org",
-    "un_data":            "https://data.un.org",
-    "undata":             "https://data.un.org",
+    "statistics_finland": "statfin",
+    "statfin":            "statfin",
+    "world_bank":         "worldbank",
+    "worldbank":          "worldbank",
+    "eurostat":           "eurostat",
+    "oecd":               "oecd",
+    "un_data":            "undata",
+    "undata":             "undata",
 }
 
 

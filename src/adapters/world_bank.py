@@ -54,12 +54,13 @@ class WorldBankAdapter(BasePortalAdapter):
                     break
 
                 for source in records:
+                    source_id = str(source.get("id", source.get("code", "")))
                     enriched = {
                         **self.get_portal_defaults(),
                         **source,
                         "_topics": topics,
+                        "_dataset_url": f"https://data.worldbank.org/source/{source_id}" if source_id else "",
                     }
-                    source_id = str(source.get("id", source.get("code", "")))
                     yield self._make_record(source_id, enriched)
 
                 total_pages = int(meta.get("pages", 1))

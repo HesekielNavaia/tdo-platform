@@ -601,7 +601,7 @@ NULLABLE_FIELDS: set[str] = {
 
 PORTAL_DEFAULTS: dict[str, dict[str, Any]] = {
     "statistics_finland": {
-        "_source_portal":   "https://stat.fi",
+        "_source_portal":   "statfin",
         "_publisher":       "Statistics Finland",
         "_publisher_type":  "NSO",
         "_languages":       ["fi", "sv", "en"],
@@ -611,7 +611,7 @@ PORTAL_DEFAULTS: dict[str, dict[str, Any]] = {
         "_schema_detected": "PxWeb",
     },
     "eurostat": {
-        "_source_portal":   "https://ec.europa.eu/eurostat",
+        "_source_portal":   "eurostat",
         "_publisher":       "Eurostat",
         "_publisher_type":  "IO",
         "_languages":       ["en", "fr", "de"],
@@ -621,7 +621,7 @@ PORTAL_DEFAULTS: dict[str, dict[str, Any]] = {
         "_schema_detected": "SDMX",
     },
     "world_bank": {
-        "_source_portal":   "https://data.worldbank.org",
+        "_source_portal":   "worldbank",
         "_publisher":       "World Bank",
         "_publisher_type":  "IO",
         "_languages":       ["en"],
@@ -631,7 +631,7 @@ PORTAL_DEFAULTS: dict[str, dict[str, Any]] = {
         "_schema_detected": "WorldBank",
     },
     "oecd": {
-        "_source_portal":   "https://stats.oecd.org",
+        "_source_portal":   "oecd",
         "_publisher":       "OECD",
         "_publisher_type":  "IO",
         "_languages":       ["en", "fr"],
@@ -641,7 +641,7 @@ PORTAL_DEFAULTS: dict[str, dict[str, Any]] = {
         "_schema_detected": "SDMX",
     },
     "un_data": {
-        "_source_portal":   "https://data.un.org",
+        "_source_portal":   "undata",
         "_publisher":       "United Nations Statistics Division",
         "_publisher_type":  "IO",
         "_languages":       ["en"],
