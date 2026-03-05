@@ -40,6 +40,8 @@ def upgrade() -> None:
     """)
 
     # Also add a GIN index on title+description for keyword fallback
+    # Note: array_to_string is STABLE not IMMUTABLE in PostgreSQL, so it cannot
+    # be used in GENERATED ALWAYS columns. Use title+description+publisher only.
     op.execute("""
         ALTER TABLE datasets
         ADD COLUMN IF NOT EXISTS fts_doc tsvector
@@ -47,7 +49,6 @@ def upgrade() -> None:
             to_tsvector('english',
                 coalesce(title, '') || ' ' ||
                 coalesce(description, '') || ' ' ||
-                coalesce(array_to_string(keywords, ' '), '') || ' ' ||
                 coalesce(publisher, '')
             )
         ) STORED;

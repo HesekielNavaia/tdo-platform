@@ -288,60 +288,72 @@ async def list_datasets(
         where = " AND ".join(filter_parts)
         results = []
 
-        async with engine.connect() as conn:
-            # Try semantic search first
-            if q:
-                query_vec = await _embed_query(q)
-                if query_vec is not None:
-                    try:
-                        vec_str = "[" + ",".join(str(x) for x in query_vec) + "]"
-                        sql = text(f"""
-                            SELECT *, 1 - (embedding_vec <=> :vec::vector) AS similarity
-                            FROM datasets
-                            WHERE {where} AND embedding_vec IS NOT NULL
-                            ORDER BY embedding_vec <=> :vec::vector
-                            LIMIT :limit OFFSET :offset
-                        """)
+        # Each attempt uses its own connection to avoid transaction abort cascade.
+        # Try semantic search first (requires pgvector migration to have run).
+        if q:
+            query_vec = await _embed_query(q)
+            if query_vec is not None:
+                try:
+                    vec_str = "[" + ",".join(str(x) for x in query_vec) + "]"
+                    # Use CAST() instead of ::vector to avoid asyncpg param conflict
+                    sql = text(f"""
+                        SELECT *, 1 - (embedding_vec <=> CAST(:vec AS vector)) AS similarity
+                        FROM datasets
+                        WHERE {where} AND embedding_vec IS NOT NULL
+                        ORDER BY embedding_vec <=> CAST(:vec AS vector)
+                        LIMIT :limit OFFSET :offset
+                    """)
+                    async with engine.connect() as conn:
                         rows = await conn.execute(sql, {**params, "vec": vec_str})
                         for row in rows.mappings():
                             sim = float(row.get("similarity") or 0.5)
                             results.append(_row_to_search_result(row, sim, "semantic"))
-                        if results:
-                            await engine.dispose()
-                            return results
-                    except Exception as exc:
-                        log.warning("semantic_search_failed", error=str(exc))
+                    if results:
+                        await engine.dispose()
+                        return results
+                except Exception as exc:
+                    log.warning("semantic_search_failed", error=str(exc))
 
-            # Keyword fallback using FTS or ILIKE
-            if q:
-                try:
-                    sql = text(f"""
-                        SELECT *, ts_rank(fts_doc, plainto_tsquery('english', :q)) AS similarity
-                        FROM datasets
-                        WHERE {where} AND fts_doc @@ plainto_tsquery('english', :q)
-                        ORDER BY similarity DESC
-                        LIMIT :limit OFFSET :offset
-                    """)
+        # Keyword fallback using FTS
+        if q and not results:
+            try:
+                sql = text(f"""
+                    SELECT *, ts_rank(fts_doc, plainto_tsquery('english', :q)) AS similarity
+                    FROM datasets
+                    WHERE {where} AND fts_doc @@ plainto_tsquery('english', :q)
+                    ORDER BY similarity DESC
+                    LIMIT :limit OFFSET :offset
+                """)
+                async with engine.connect() as conn:
                     rows = await conn.execute(sql, {**params, "q": q})
                     for row in rows.mappings():
                         sim = min(1.0, float(row.get("similarity") or 0.3))
                         results.append(_row_to_search_result(row, sim, "keyword"))
-                except Exception:
-                    # FTS column may not exist yet — ILIKE fallback
-                    kw = f"%{q}%"
-                    sql = text(f"""
-                        SELECT *, confidence_score AS similarity
-                        FROM datasets
-                        WHERE {where} AND (title ILIKE :kw OR description ILIKE :kw)
-                        ORDER BY confidence_score DESC
-                        LIMIT :limit OFFSET :offset
-                    """)
+            except Exception as exc:
+                log.warning("fts_search_failed", error=str(exc))
+
+        # ILIKE fallback if FTS column doesn't exist yet or returned nothing
+        if q and not results:
+            try:
+                kw = f"%{q}%"
+                sql = text(f"""
+                    SELECT *, confidence_score AS similarity
+                    FROM datasets
+                    WHERE {where} AND (title ILIKE :kw OR description ILIKE :kw)
+                    ORDER BY confidence_score DESC
+                    LIMIT :limit OFFSET :offset
+                """)
+                async with engine.connect() as conn:
                     rows = await conn.execute(sql, {**params, "kw": kw})
                     for row in rows.mappings():
                         sim = float(row.get("similarity") or 0.5)
                         results.append(_row_to_search_result(row, sim, "keyword"))
-            else:
-                # No query — return top records by confidence
+            except Exception as exc:
+                log.warning("ilike_search_failed", error=str(exc))
+
+        if not q:
+            # No query — return top records by confidence
+            try:
                 sql = text(f"""
                     SELECT *, confidence_score AS similarity
                     FROM datasets
@@ -349,10 +361,13 @@ async def list_datasets(
                     ORDER BY confidence_score DESC
                     LIMIT :limit OFFSET :offset
                 """)
-                rows = await conn.execute(sql, params)
-                for row in rows.mappings():
-                    sim = float(row.get("similarity") or 0.5)
-                    results.append(_row_to_search_result(row, sim, "browse"))
+                async with engine.connect() as conn:
+                    rows = await conn.execute(sql, params)
+                    for row in rows.mappings():
+                        sim = float(row.get("similarity") or 0.5)
+                        results.append(_row_to_search_result(row, sim, "browse"))
+            except Exception as exc:
+                log.warning("browse_search_failed", error=str(exc))
 
         await engine.dispose()
         return results
