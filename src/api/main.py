@@ -258,9 +258,69 @@ async def health():
 # GET /v1/stats
 # ---------------------------------------------------------------------------
 
+def _build_db_url() -> str | None:
+    """Build asyncpg DB URL using managed identity token, or None if not configured."""
+    fqdn = os.environ.get("POSTGRES_FQDN")
+    db_name = os.environ.get("POSTGRES_DB")
+    client_id = os.environ.get("AZURE_CLIENT_ID")
+    if not (fqdn and db_name and client_id):
+        return None
+    try:
+        import urllib.parse
+        from azure.identity import ManagedIdentityCredential
+        credential = ManagedIdentityCredential(client_id=client_id)
+        token = credential.get_token("https://ossrdbms-aad.database.windows.net/.default")
+        username = os.environ.get("POSTGRES_USER", "tdo-id-api-dev")
+        encoded = urllib.parse.quote(token.token, safe="")
+        return f"postgresql+asyncpg://{username}@{fqdn}/{db_name}?password={encoded}&ssl=require"
+    except Exception as exc:
+        log.warning("stats_db_url_failed", error=str(exc))
+        return None
+
+
 @app.get("/v1/stats")
 async def stats():
     """Aggregate counts by portal, theme, geo, access_type, resource_type."""
+    db_url = _build_db_url()
+    if db_url:
+        try:
+            from sqlalchemy import text
+            from sqlalchemy.ext.asyncio import create_async_engine
+            engine = create_async_engine(db_url, echo=False)
+            async with engine.connect() as conn:
+                total = (await conn.execute(text("SELECT COUNT(*) FROM datasets"))).scalar() or 0
+                portal_rows = await conn.execute(
+                    text("SELECT portal_id, COUNT(*) FROM datasets GROUP BY portal_id")
+                )
+                by_portal = {r[0]: r[1] for r in portal_rows}
+                theme_rows = await conn.execute(
+                    text("SELECT unnest(themes) AS t, COUNT(*) FROM datasets GROUP BY t")
+                )
+                by_theme = {r[0]: r[1] for r in theme_rows}
+                geo_rows = await conn.execute(
+                    text("SELECT unnest(geographic_coverage) AS g, COUNT(*) FROM datasets GROUP BY g")
+                )
+                by_geo = {r[0]: r[1] for r in geo_rows}
+                access_rows = await conn.execute(
+                    text("SELECT access_type, COUNT(*) FROM datasets GROUP BY access_type")
+                )
+                by_access = {r[0]: r[1] for r in access_rows}
+                rtype_rows = await conn.execute(
+                    text("SELECT resource_type, COUNT(*) FROM datasets GROUP BY resource_type")
+                )
+                by_rtype = {r[0]: r[1] for r in rtype_rows}
+            await engine.dispose()
+            return {
+                "total_datasets": total,
+                "by_portal": by_portal,
+                "by_theme": by_theme,
+                "by_geo": by_geo,
+                "by_access_type": by_access,
+                "by_resource_type": by_rtype,
+            }
+        except Exception as exc:
+            log.warning("stats_db_query_failed", error=str(exc))
+
     return {
         "total_datasets": 0,
         "by_portal": {},

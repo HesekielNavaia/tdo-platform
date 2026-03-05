@@ -4,6 +4,8 @@ uvicorn
 httpx
 asyncpg
 structlog
+azure-identity
+azure-keyvault-secrets
 pytest
 pytest-asyncio
 hypothesis
