@@ -29,6 +29,8 @@ EXPOSE 8000
 CMD ["sh", "-c", \
   "if [ \"$JOB_NAME\" = \"harvest\" ]; then \
      exec python -m src.jobs.harvest; \
+   elif [ \"$JOB_NAME\" = \"migrate\" ]; then \
+     exec python -m src.jobs.migrate; \
    else \
      exec uvicorn src.api.main:app --host 0.0.0.0 --port 8000; \
    fi"]

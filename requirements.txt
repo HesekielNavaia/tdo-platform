@@ -6,6 +6,7 @@ asyncpg
 structlog
 azure-identity
 azure-keyvault-secrets
+psycopg2-binary
 pytest
 pytest-asyncio
 hypothesis
