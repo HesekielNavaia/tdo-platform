@@ -78,7 +78,7 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["https://proud-sand-0b2392903.1.azurestaticapps.net"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -101,6 +101,9 @@ PUBLIC_PATHS = {"/v1/health", "/v1/stats", "/docs", "/redoc", "/openapi.json"}
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     """Require API key for all non-public endpoints."""
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
     path = request.url.path
     if path in PUBLIC_PATHS or any(path.startswith(p) for p in ["/docs", "/redoc", "/openapi"]):
         return await call_next(request)
@@ -156,6 +159,40 @@ async def _embed_query(query: str) -> list[float] | None:
     except Exception as exc:
         log.warning("query_embed_failed", error=str(exc))
     return None
+
+
+def _diversify(results: list[SearchResult], limit: int, per_portal_min: int = 2) -> list[SearchResult]:
+    """
+    Ensure portal diversity in search results.
+    Phase 1: guarantee at least per_portal_min results from every portal that
+             has at least one match (results already sorted by score).
+    Phase 2: fill remaining slots with highest-scoring remaining results.
+    """
+    by_portal: dict[str, list[SearchResult]] = {}
+    for r in results:
+        pid = r.record.source_portal or "unknown"
+        by_portal.setdefault(pid, []).append(r)
+
+    selected: list[SearchResult] = []
+    selected_ids: set[str] = set()
+
+    # Phase 1 — one pass over portals in order of their best-scoring result
+    portals_by_best = sorted(by_portal.keys(), key=lambda p: by_portal[p][0].similarity_score, reverse=True)
+    for pid in portals_by_best:
+        for r in by_portal[pid][:per_portal_min]:
+            if r.record.id not in selected_ids:
+                selected.append(r)
+                selected_ids.add(r.record.id)
+
+    # Phase 2 — fill to limit by score
+    for r in results:
+        if len(selected) >= limit:
+            break
+        if r.record.id not in selected_ids:
+            selected.append(r)
+            selected_ids.add(r.record.id)
+
+    return sorted(selected, key=lambda r: r.similarity_score, reverse=True)[:limit]
 
 
 def _row_to_search_result(row, similarity: float, channel: str) -> SearchResult:
@@ -238,6 +275,7 @@ async def list_datasets(
     geo: Optional[str] = Query(None, description="ISO 3166 codes, comma-separated"),
     theme: Optional[str] = Query(None, description="Theme codes, comma-separated"),
     publisher: Optional[str] = Query(None, description="Publisher name (fuzzy match)"),
+    portal: Optional[str] = Query(None, description="Portal ID (statistics_finland | eurostat | world_bank | oecd | un_data)"),
     format: Optional[str] = Query(None, description="Format string"),
     access: Optional[str] = Query(None, description="open | restricted | embargoed"),
     resource_type: Optional[str] = Query(None, description="dataset | table | indicator | collection"),
@@ -259,7 +297,10 @@ async def list_datasets(
 
         # Build filter clauses
         filter_parts = ["confidence_score >= :min_confidence"]
-        params: dict = {"min_confidence": min_confidence, "limit": limit, "offset": offset}
+        # Fetch a larger candidate pool so diversity pass has enough to work with.
+        # When a portal filter is active we go direct — no diversity needed.
+        candidate_limit = limit if portal else limit * 5
+        params: dict = {"min_confidence": min_confidence, "limit": candidate_limit, "offset": offset}
 
         if access:
             filter_parts.append("access_type = :access")
@@ -270,6 +311,9 @@ async def list_datasets(
         if publisher:
             filter_parts.append("publisher ILIKE :publisher")
             params["publisher"] = f"%{publisher}%"
+        if portal:
+            filter_parts.append("portal_id = :portal")
+            params["portal"] = portal
         if geo:
             geo_list = [g.strip() for g in geo.split(",") if g.strip()]
             filter_parts.append("geographic_coverage && :geo")
@@ -308,9 +352,6 @@ async def list_datasets(
                         for row in rows.mappings():
                             sim = float(row.get("similarity") or 0.5)
                             results.append(_row_to_search_result(row, sim, "semantic"))
-                    if results:
-                        await engine.dispose()
-                        return results
                 except Exception as exc:
                     log.warning("semantic_search_failed", error=str(exc))
 
@@ -370,6 +411,14 @@ async def list_datasets(
                 log.warning("browse_search_failed", error=str(exc))
 
         await engine.dispose()
+
+        # Apply portal diversity when no explicit portal filter is active.
+        # This ensures all portals with matching results appear in top results.
+        if results and not portal:
+            results = _diversify(results, limit)
+        else:
+            results = results[:limit]
+
         return results
 
     except Exception as exc:
@@ -404,21 +453,50 @@ async def get_similar_datasets(dataset_id: str):
 
 @app.get("/v1/datasets/{dataset_id}/provenance")
 async def get_provenance(dataset_id: str, request: Request):
-    """
-    Return InternalProcessingRecord for a dataset.
-    Requires elevated API scope.
-    """
-    # Check for elevated scope
-    api_key = request.headers.get(API_KEY_HEADER, "")
-    elevated_keys = set(
-        filter(None, os.environ.get("TDO_ELEVATED_KEYS", "").split(","))
-    )
-    if elevated_keys and api_key not in elevated_keys:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Elevated API scope required for provenance endpoint",
-        )
-    raise HTTPException(status_code=404, detail="Dataset not found")
+    """Return processing provenance for a dataset from dataset_versions."""
+    db_url = _build_db_url()
+    if not db_url:
+        raise HTTPException(status_code=503, detail="Database not configured")
+    try:
+        from sqlalchemy import text
+        from sqlalchemy.ext.asyncio import create_async_engine
+        engine = create_async_engine(db_url, echo=False)
+        async with engine.connect() as conn:
+            row = (await conn.execute(
+                text("""
+                    SELECT d.id, d.source_id, d.portal_id,
+                           d.ingestion_timestamp, d.confidence_score,
+                           d.completeness_score, d.freshness_score,
+                           dv.version_number, dv.mvm_snapshot, dv.created_at
+                    FROM datasets d
+                    LEFT JOIN dataset_versions dv ON dv.id = d.current_version_id
+                    WHERE d.id = CAST(:id AS uuid)
+                """),
+                {"id": dataset_id},
+            )).mappings().fetchone()
+        await engine.dispose()
+        if not row:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        snapshot = row["mvm_snapshot"] or {}
+        return {
+            "dataset_id":          str(row["id"]),
+            "source_id":           row["source_id"],
+            "portal_id":           row["portal_id"],
+            "ingestion_timestamp": row["ingestion_timestamp"].isoformat() if row["ingestion_timestamp"] else None,
+            "confidence_score":    row["confidence_score"],
+            "completeness_score":  row["completeness_score"],
+            "freshness_score":     row["freshness_score"],
+            "version_number":      row["version_number"],
+            "field_evidence":      snapshot.get("field_evidence"),
+            "field_confidence":    snapshot.get("field_confidence"),
+            "harmoniser_version":  snapshot.get("harmoniser_version"),
+            "model_used":          snapshot.get("llm_model_used"),
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.warning("provenance_query_failed", dataset_id=dataset_id, error=str(exc))
+        raise HTTPException(status_code=500, detail="Internal error")
 
 
 # ---------------------------------------------------------------------------
