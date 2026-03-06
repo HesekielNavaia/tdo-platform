@@ -755,14 +755,48 @@ async def health():
     embedder_status   = await _probe_endpoint(embedding_url, embedding_key)
     harmoniser_status = await _probe_endpoint(openai_url, openai_key)
 
+    # Per-portal record counts from DB (best-effort)
+    portal_records: dict[str, int] = {}
+    db_url = _build_db_url()
+    if db_url:
+        try:
+            from sqlalchemy import text
+            from sqlalchemy.ext.asyncio import create_async_engine
+            engine = create_async_engine(db_url, echo=False)
+            async with engine.connect() as conn:
+                rows = await conn.execute(
+                    text("SELECT portal_id, COUNT(*) FROM datasets GROUP BY portal_id")
+                )
+                for r in rows:
+                    portal_records[r[0]] = r[1]
+            await engine.dispose()
+        except Exception as exc:
+            log.warning("health_db_query_failed", error=str(exc))
+
+    portal_ids = ["statistics_finland", "world_bank", "eurostat", "oecd", "un_data"]
+    # Map short DB names back to canonical portal_id display names
+    _short_to_display = {
+        "statfin": "statistics_finland",
+        "worldbank": "world_bank",
+        "eurostat": "eurostat",
+        "oecd": "oecd",
+        "undata": "un_data",
+    }
+    portals_health = {}
+    for pid in portal_ids:
+        short = {v: k for k, v in _short_to_display.items()}.get(pid, pid)
+        portals_health[pid] = {
+            "status": "unknown",
+            "records": portal_records.get(pid, portal_records.get(short, 0)),
+        }
+
     return {
         "status": "ok",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "version": "1.0.0",
-        "portals": {
-            pid: {"status": "unknown"}
-            for pid in ["statistics_finland", "world_bank", "eurostat", "oecd", "un_data"]
-        },
+        "git_sha": os.environ.get("GIT_SHA", "unknown"),
+        "deploy_time": os.environ.get("DEPLOY_TIME", "unknown"),
+        "portals": portals_health,
         "model_endpoints": {
             "embedder": embedder_status,
             "harmoniser": harmoniser_status,

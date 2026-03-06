@@ -117,8 +117,8 @@ function ProvenancePanel({ recordId, recordMeta, onClose }) {
         setProvenance(data);
         setLoading(false);
       })
-      .catch(err => {
-        setError(err.message);
+      .catch(() => {
+        setError("Could not load provenance information.");
         setLoading(false);
       });
   }, [recordId]);
@@ -478,8 +478,8 @@ export default function TDOApp() {
         setStats(statsData);
         setDashLoading(false);
       })
-      .catch(err => {
-        setDashError(err.message);
+      .catch(() => {
+        setDashError("Could not load dashboard data. Please try again.");
         setDashLoading(false);
       });
   }, [tab]);
@@ -520,7 +520,7 @@ export default function TDOApp() {
       setCurrentOffset(normalized.length);
       setHasMore(normalized.length === limit);
     } catch (err) {
-      setSearchError(err.message);
+      setSearchError("Search is temporarily unavailable. Please try again in a moment.");
       setResults([]);
     } finally {
       setSearchLoading(false);
@@ -554,7 +554,7 @@ export default function TDOApp() {
       setCurrentOffset(prev => prev + normalized.length);
       setHasMore(normalized.length === pageSize);
     } catch (err) {
-      setSearchError(err.message);
+      setSearchError("Could not load more results. Please try again.");
     } finally {
       setSearchLoading(false);
     }
