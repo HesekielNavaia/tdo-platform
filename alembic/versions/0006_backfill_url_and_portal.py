@@ -122,6 +122,14 @@ def upgrade() -> None:
           AND (dataset_url IS NULL OR dataset_url = '');
     """)
 
+    # UN Data: source_id is SDMX dataflow ID e.g. "DF_UNDATA_COUNTRYDATA"
+    op.execute("""
+        UPDATE datasets
+        SET dataset_url = 'https://data.un.org/SdmxBrowser/start?df[id]=' || source_id || '&df[ag]=UNSD'
+        WHERE portal_id = 'undata'
+          AND (dataset_url IS NULL OR dataset_url = '');
+    """)
+
 
 def downgrade() -> None:
     # Downgrade is intentionally a no-op — we don't want to re-corrupt data.
