@@ -430,6 +430,37 @@ async def list_datasets(
             except Exception as exc:
                 log.warning("browse_search_failed", error=str(exc))
 
+        # If no explicit portal filter, ensure every portal that has matching
+        # records appears in the candidate pool (even if it ranked outside top N).
+        if q and not portal and results:
+            portals_in_pool = {r.record.source_portal for r in results}
+            all_portals = {"statfin", "worldbank", "eurostat", "oecd", "undata"}
+            missing = all_portals - portals_in_pool
+            if missing:
+                for missing_pid in missing:
+                    try:
+                        sql_top = text(f"""
+                            SELECT *, confidence_score AS similarity
+                            FROM datasets
+                            WHERE {where} AND portal_id = :pid
+                              AND (title ILIKE :kw OR description ILIKE :kw
+                                   OR fts_doc @@ plainto_tsquery('english', :q_plain))
+                            ORDER BY confidence_score DESC
+                            LIMIT 2
+                        """)
+                        async with engine.connect() as conn:
+                            rows_top = await conn.execute(
+                                sql_top,
+                                {**params, "pid": missing_pid, "kw": f"%{q}%", "q_plain": q},
+                            )
+                            for row in rows_top.mappings():
+                                if str(row["id"]) not in seen_ids:
+                                    sim = float(row.get("similarity") or 0.5)
+                                    results.append(_row_to_search_result(row, sim, "keyword"))
+                                    seen_ids.add(str(row["id"]))
+                    except Exception as exc:
+                        log.warning("portal_fill_failed", portal=missing_pid, error=str(exc))
+
         await engine.dispose()
 
         # Apply portal diversity when no explicit portal filter is active.
