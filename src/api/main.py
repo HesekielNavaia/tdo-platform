@@ -432,26 +432,36 @@ async def list_datasets(
 
         # If no explicit portal filter, ensure every portal that has matching
         # records appears in the candidate pool (even if it ranked outside top N).
+        # Use OR-based FTS (websearch_to_tsquery with OR) or single-keyword ILIKE
+        # so broad queries still find records even when they lack all keywords.
         if q and not portal and results:
             portals_in_pool = {r.record.source_portal for r in results}
             all_portals = {"statfin", "worldbank", "eurostat", "oecd", "undata"}
             missing = all_portals - portals_in_pool
             if missing:
+                # Build per-keyword ILIKE conditions so any single word matches
+                words = [w.strip() for w in q.split() if len(w.strip()) >= 3][:4]
+                if not words:
+                    words = [q.strip()]
+                ilike_clauses = " OR ".join(
+                    f"title ILIKE :kw{i} OR description ILIKE :kw{i}"
+                    for i in range(len(words))
+                )
+                kw_params = {f"kw{i}": f"%{w}%" for i, w in enumerate(words)}
                 for missing_pid in missing:
                     try:
                         sql_top = text(f"""
                             SELECT *, confidence_score AS similarity
                             FROM datasets
                             WHERE {where} AND portal_id = :pid
-                              AND (title ILIKE :kw OR description ILIKE :kw
-                                   OR fts_doc @@ plainto_tsquery('english', :q_plain))
+                              AND ({ilike_clauses})
                             ORDER BY confidence_score DESC
                             LIMIT 2
                         """)
                         async with engine.connect() as conn:
                             rows_top = await conn.execute(
                                 sql_top,
-                                {**params, "pid": missing_pid, "kw": f"%{q}%", "q_plain": q},
+                                {**params, "pid": missing_pid, **kw_params},
                             )
                             for row in rows_top.mappings():
                                 if str(row["id"]) not in seen_ids:
