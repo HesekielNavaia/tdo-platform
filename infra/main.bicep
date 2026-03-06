@@ -51,6 +51,9 @@ param initialDeploy bool = true
 @description('Apply PostgreSQL server parameter configurations. Set to false on re-deployments to avoid ServerIsBusy errors on an existing server.')
 param postgresApplyServerConfig bool = true
 
+@description('Deploy private endpoint for blob storage. Set to false on re-deployments to avoid CannotChangePrivateLinkConnectionOnPrivateEndpoint errors.')
+param deployStoragePrivateEndpoint bool = true
+
 // ── Name prefix ───────────────────────────────────────────────────────────────
 
 var namePrefix = 'tdo'
@@ -116,6 +119,7 @@ module storage 'modules/storage.bicep' = {
     dnsZoneBlobId: network.outputs.dnsZoneBlobId
     dnsZoneBlobName: network.outputs.dnsZoneBlobName
     identityPrincipalIds: identities.outputs.allWorkloadPrincipalIds
+    deployPrivateEndpoint: deployStoragePrivateEndpoint
   }
 }
 

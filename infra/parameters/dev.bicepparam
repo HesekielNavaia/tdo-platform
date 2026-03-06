@@ -30,3 +30,6 @@ param alertEmailAddress = 'ops@tdo-platform.example.com'
 param postgresSkuName = 'Standard_B1ms'
 
 param postgresSkuTier = 'Burstable'
+
+// Private endpoint already exists — skip re-deploy to avoid CannotChangePrivateLinkConnectionOnPrivateEndpoint
+param deployStoragePrivateEndpoint = false

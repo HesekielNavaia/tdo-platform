@@ -22,6 +22,9 @@ param dnsZoneBlobName string
 @description('Managed identity principal IDs that need storage access')
 param identityPrincipalIds array = []
 
+@description('Deploy private endpoint for blob storage. Set to false on re-deployments to avoid CannotChangePrivateLinkConnectionOnPrivateEndpoint errors.')
+param deployPrivateEndpoint bool = true
+
 // Storage Blob Data Contributor role
 var storageBlobDataContributorRoleId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
 
@@ -197,7 +200,7 @@ resource lifecyclePolicy 'Microsoft.Storage/storageAccounts/managementPolicies@2
 
 // ── Private Endpoint ──────────────────────────────────────────────────────────
 
-resource privateEndpointBlob 'Microsoft.Network/privateEndpoints@2023-05-01' = {
+resource privateEndpointBlob 'Microsoft.Network/privateEndpoints@2023-05-01' = if (deployPrivateEndpoint) {
   name: '${namePrefix}-pe-blob-${environment}'
   location: location
   properties: {
@@ -216,7 +219,7 @@ resource privateEndpointBlob 'Microsoft.Network/privateEndpoints@2023-05-01' = {
   }
 }
 
-resource privateEndpointDnsGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-05-01' = {
+resource privateEndpointDnsGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2023-05-01' = if (deployPrivateEndpoint) {
   name: 'blobDnsZoneGroup'
   parent: privateEndpointBlob
   properties: {
