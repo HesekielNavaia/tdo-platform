@@ -1,7 +1,7 @@
 """
 Statistics Finland portal adapter.
 Protocol: PxWeb REST JSON API
-Base URL: https://pxdata.stat.fi:443/PxWeb/api/v1/en
+Base URL: https://pxdata.stat.fi/PXWeb/api/v1/en
 """
 from __future__ import annotations
 
@@ -15,9 +15,9 @@ from src.pipeline.mapping_tables import PORTAL_DEFAULTS
 
 log = structlog.get_logger(__name__)
 
-STATFIN_API_BASE  = "https://pxdata.stat.fi/PxWeb/api/v1/en"
+STATFIN_API_BASE  = "https://pxdata.stat.fi/PXWeb/api/v1/en"
 STATFIN_BASE_URL  = f"{STATFIN_API_BASE}/StatFin"   # start traversal here
-STATFIN_VIEW_BASE = "https://pxdata.stat.fi/PxWeb/pxweb/en/StatFin"
+STATFIN_VIEW_BASE = "https://pxdata.stat.fi/PXWeb/pxweb/en/StatFin"
 
 
 class StatisticsFinlandAdapter(BasePortalAdapter):
@@ -80,14 +80,32 @@ class StatisticsFinlandAdapter(BasePortalAdapter):
             resp = await self._rate_limited_get(client, url)
             raw = resp.json()
 
-        # The user-facing URL uses the pxweb viewer, not the API path
-        # e.g. https://pxdata.stat.fi/PxWeb/pxweb/en/StatFin/matk/statfin_matk_pxt_117s.px
-        viewer_path = source_id.lstrip("/")
+        # The user-facing URL uses the pxweb viewer with double-underscore path format:
+        # e.g. https://pxdata.stat.fi/PxWeb/pxweb/en/StatFin/StatFin__matk/statfin_matk_pxt_117s.px
+        # For nested databases: StatFin/Kokeelliset_tilastot/sbsis/table.px
+        #   → /PxWeb/pxweb/en/Kokeelliset_tilastot/Kokeelliset_tilastot__sbsis/table.px
+        viewer_path = source_id.lstrip("/").removeprefix("StatFin/")
+        # viewer_path is now e.g. "matk/statfin_matk_pxt_117s.px"
+        # or "Kokeelliset_tilastot/sbsis/table.px" for nested databases
+        parts = viewer_path.split("/")
+        if len(parts) == 2:
+            # Standard StatFin table: {folder}/{table}.px
+            db, subject, table = "StatFin", parts[0], parts[1]
+        elif len(parts) >= 3:
+            # Nested database: {database}/{folder}/{table}.px
+            db, subject, table = parts[0], parts[1], "/".join(parts[2:])
+        else:
+            db, subject, table = "StatFin", "", viewer_path
+        if subject:
+            dataset_url = f"https://pxdata.stat.fi/PXWeb/pxweb/en/{db}/{db}__{subject}/{table}"
+        else:
+            dataset_url = f"https://pxdata.stat.fi/PXWeb/pxweb/en/{db}/{table}"
         enriched = {
             **self.get_portal_defaults(),
             "pxweb_path": source_id,
             "pxweb_response": raw,
-            "_dataset_url": f"{STATFIN_VIEW_BASE}/{viewer_path.removeprefix('StatFin/')}",
+            "_dataset_url": dataset_url,
+            "url": dataset_url,
         }
 
         # Extract the key metadata fields from the PxWeb response
