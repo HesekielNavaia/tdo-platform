@@ -343,7 +343,11 @@ async def list_datasets(
         results = []
 
         # Each attempt uses its own connection to avoid transaction abort cascade.
-        # Try semantic search first (requires pgvector migration to have run).
+        # Run semantic search (records with embeddings) and FTS supplement in
+        # parallel so portals without embeddings (e.g. statfin, worldbank) are
+        # included even when semantic search returns results.
+        seen_ids: set = set()
+
         if q:
             query_vec = await _embed_query(q)
             if query_vec is not None:
@@ -362,11 +366,14 @@ async def list_datasets(
                         for row in rows.mappings():
                             sim = float(row.get("similarity") or 0.5)
                             results.append(_row_to_search_result(row, sim, "semantic"))
+                            seen_ids.add(str(row["id"]))
                 except Exception as exc:
                     log.warning("semantic_search_failed", error=str(exc))
 
-        # Keyword fallback using FTS
-        if q and not results:
+        # FTS supplement — always runs when there is a query so that portals
+        # without embeddings are still represented in the candidate pool.
+        # When semantic search failed entirely this acts as the primary channel.
+        if q:
             try:
                 sql = text(f"""
                     SELECT *, ts_rank(fts_doc, plainto_tsquery('english', :q)) AS similarity
@@ -378,12 +385,14 @@ async def list_datasets(
                 async with engine.connect() as conn:
                     rows = await conn.execute(sql, {**params, "q": q})
                     for row in rows.mappings():
-                        sim = min(1.0, float(row.get("similarity") or 0.3))
-                        results.append(_row_to_search_result(row, sim, "keyword"))
+                        if str(row["id"]) not in seen_ids:
+                            sim = min(1.0, float(row.get("similarity") or 0.3))
+                            results.append(_row_to_search_result(row, sim, "keyword"))
+                            seen_ids.add(str(row["id"]))
             except Exception as exc:
                 log.warning("fts_search_failed", error=str(exc))
 
-        # ILIKE fallback if FTS column doesn't exist yet or returned nothing
+        # ILIKE fallback if FTS returned nothing at all
         if q and not results:
             try:
                 kw = f"%{q}%"
@@ -397,8 +406,9 @@ async def list_datasets(
                 async with engine.connect() as conn:
                     rows = await conn.execute(sql, {**params, "kw": kw})
                     for row in rows.mappings():
-                        sim = float(row.get("similarity") or 0.5)
-                        results.append(_row_to_search_result(row, sim, "keyword"))
+                        if str(row["id"]) not in seen_ids:
+                            sim = float(row.get("similarity") or 0.5)
+                            results.append(_row_to_search_result(row, sim, "keyword"))
             except Exception as exc:
                 log.warning("ilike_search_failed", error=str(exc))
 
@@ -609,6 +619,7 @@ async def natural_language_query(body: QueryBody):
         engine = create_async_engine(db_url, echo=False)
         results = []
 
+        seen_ids: set = set()
         query_vec = await _embed_query(question)
         if query_vec is not None:
             vec_str = "[" + ",".join(str(x) for x in query_vec) + "]"
@@ -629,32 +640,38 @@ async def natural_language_query(body: QueryBody):
                 """)
                 async with engine.connect() as conn:
                     rows = await conn.execute(sql, params)
-                    results = [dict(r) for r in rows.mappings()]
+                    for r in rows.mappings():
+                        d = dict(r)
+                        results.append(d)
+                        seen_ids.add(str(d["id"]))
             except Exception as exc:
                 log.warning("query_semantic_failed", error=str(exc))
 
-        # FTS fallback
-        if not results:
-            where = "confidence_score >= 0.3"
-            params2: dict = {"q": question, "limit": limit * 3}
-            if portal_filter_val:
-                where += " AND portal_id = :portal"
-                params2["portal"] = portal_filter_val
-            try:
-                sql2 = text(f"""
-                    SELECT id, source_id, portal_id, title, description, dataset_url,
-                           publisher, confidence_score,
-                           ts_rank(fts_doc, plainto_tsquery('english', :q)) AS score
-                    FROM datasets
-                    WHERE {where} AND fts_doc @@ plainto_tsquery('english', :q)
-                    ORDER BY score DESC
-                    LIMIT :limit
-                """)
-                async with engine.connect() as conn:
-                    rows2 = await conn.execute(sql2, params2)
-                    results = [dict(r) for r in rows2.mappings()]
-            except Exception as exc:
-                log.warning("query_fts_failed", error=str(exc))
+        # FTS supplement — always runs to include portals without embeddings
+        fts_where = "confidence_score >= 0.3"
+        params2: dict = {"q": question, "limit": limit * 3}
+        if portal_filter_val:
+            fts_where += " AND portal_id = :portal"
+            params2["portal"] = portal_filter_val
+        try:
+            sql2 = text(f"""
+                SELECT id, source_id, portal_id, title, description, dataset_url,
+                       publisher, confidence_score,
+                       ts_rank(fts_doc, plainto_tsquery('english', :q)) AS score
+                FROM datasets
+                WHERE {fts_where} AND fts_doc @@ plainto_tsquery('english', :q)
+                ORDER BY score DESC
+                LIMIT :limit
+            """)
+            async with engine.connect() as conn:
+                rows2 = await conn.execute(sql2, params2)
+                for r in rows2.mappings():
+                    d = dict(r)
+                    if str(d["id"]) not in seen_ids:
+                        results.append(d)
+                        seen_ids.add(str(d["id"]))
+        except Exception as exc:
+            log.warning("query_fts_failed", error=str(exc))
 
         await engine.dispose()
 
