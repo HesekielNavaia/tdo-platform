@@ -17,7 +17,8 @@ from src.pipeline.mapping_tables import PORTAL_DEFAULTS
 log = structlog.get_logger(__name__)
 
 UNDATA_BASE_URL = "http://data.un.org/ws/rest"
-UNDATA_DATAFLOW_URL = f"{UNDATA_BASE_URL}/dataflow/UNSD"
+UNDATA_DATAFLOW_URL = f"{UNDATA_BASE_URL}/dataflow/all"
+UNSTATS_SDG_URL = "https://unstats.un.org/SDGAPI/v1/sdg/Series/List"
 
 
 class UNDataAdapter(BasePortalAdapter):
@@ -31,10 +32,14 @@ class UNDataAdapter(BasePortalAdapter):
 
     async def fetch_catalogue(self) -> AsyncIterator[RawRecord]:
         """
-        Fetch UN Data dataflows. Uses aggressive error handling:
-        any parse failure routes the record to schema="unknown" for LLM harmonisation.
+        Fetch UN Data records from two sources:
+        1. All SDMX dataflows across all UN Data agencies.
+        2. UN Stats SDG indicator series (unstats.un.org/SDGAPI).
         """
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        seen: set[str] = set()
+
+        # --- Source 1: SDMX dataflows (all agencies) ---
+        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
             try:
                 resp = await self._rate_limited_get(
                     client,
@@ -45,13 +50,49 @@ class UNDataAdapter(BasePortalAdapter):
                 dataflows = self._parse_sdmx_dataflows_defensive(resp.text)
             except Exception as e:
                 log.error("undata_catalogue_fetch_failed", error=str(e))
-                return
+                dataflows = []
 
             for df in dataflows:
-                enriched = {**self.get_portal_defaults(), **df}
                 source_id = df.get("dataflow_id", "")
-                if source_id:
+                if source_id and source_id not in seen:
+                    seen.add(source_id)
+                    enriched = {**self.get_portal_defaults(), **df}
                     yield self._make_record(source_id, enriched)
+
+        # --- Source 2: UN Stats SDG series ---
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            try:
+                resp = await client.get(UNSTATS_SDG_URL, timeout=30.0)
+                resp.raise_for_status()
+                series_list = resp.json()
+            except Exception as e:
+                log.error("unstats_sdg_fetch_failed", error=str(e))
+                series_list = []
+
+            for series in series_list:
+                code = series.get("code", "")
+                if not code or code in seen:
+                    continue
+                seen.add(code)
+                description = series.get("description", code)
+                goals = series.get("goal", [])
+                indicators = series.get("indicator", [])
+                theme = f"SDG {goals[0]}" if goals else "SDG"
+                enriched = {
+                    **self.get_portal_defaults(),
+                    "dataflow_id": code,
+                    "agencyID": "IAEG-SDGs",
+                    "_dataset_url": f"https://unstats.un.org/sdgs/indicators/database/?indicator={indicators[0]}" if indicators else f"https://unstats.un.org/sdgs/",
+                    "data": {
+                        "dataflows": [{
+                            "id": code,
+                            "agencyID": "IAEG-SDGs",
+                            "name": {"en": description},
+                            "description": {"en": f"SDG indicator series. Goals: {', '.join(goals)}. Indicators: {', '.join(indicators)}."},
+                        }]
+                    },
+                }
+                yield self._make_record(f"SDG_{code}", enriched)
 
     async def fetch_record(self, source_id: str) -> RawRecord:
         """Fetch a single UN Data dataflow. On parse failure, returns raw text payload."""
@@ -130,7 +171,7 @@ class UNDataAdapter(BasePortalAdapter):
                     results.append({
                         "dataflow_id": df_id,
                         "agencyID": agency_id,
-                        "_dataset_url": f"https://data.un.org/SdmxBrowser/start?df[id]={df_id}&df[ag]={agency_id}",
+                        "_dataset_url": f"https://data.un.org/SdmxBrowser/start?df[id]={df_id}&df[ag]={agency_id}" if agency_id == "UNSD" else f"https://unstats.un.org/sdgs/",
                         "data": {
                             "dataflows": [{
                                 "id": df_id,
