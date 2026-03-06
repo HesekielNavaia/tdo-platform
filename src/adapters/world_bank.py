@@ -59,7 +59,7 @@ class WorldBankAdapter(BasePortalAdapter):
                         **self.get_portal_defaults(),
                         **source,
                         "_topics": topics,
-                        "_dataset_url": f"https://data.worldbank.org/source/{source_id}" if source_id else "",
+                        "_dataset_url": f"https://databank.worldbank.org/source/{source_id}" if source_id else "",
                     }
                     yield self._make_record(source_id, enriched)
 
