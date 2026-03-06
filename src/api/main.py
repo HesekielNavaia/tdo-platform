@@ -714,6 +714,44 @@ async def natural_language_query(body: QueryBody):
         except Exception as exc:
             log.warning("query_fts_failed", error=str(exc))
 
+        # Portal fill: ensure every portal appears in the candidate pool
+        if not portal_filter_val and results:
+            portals_in_pool = {r.get("portal_id", "") for r in results}
+            all_portals = {"statfin", "worldbank", "eurostat", "oecd", "undata"}
+            missing = all_portals - portals_in_pool
+            if missing:
+                words = [w.strip() for w in question.split() if len(w.strip()) >= 3][:4]
+                if not words:
+                    words = [question.strip()]
+                ilike_clauses = " OR ".join(
+                    f"title ILIKE :kw{i} OR description ILIKE :kw{i}"
+                    for i in range(len(words))
+                )
+                kw_params = {f"kw{i}": f"%{w}%" for i, w in enumerate(words)}
+                for missing_pid in missing:
+                    try:
+                        sql_fill = text(f"""
+                            SELECT id, source_id, portal_id, title, description, dataset_url,
+                                   publisher, confidence_score, confidence_score AS score
+                            FROM datasets
+                            WHERE confidence_score >= 0.3 AND portal_id = :pid
+                              AND ({ilike_clauses})
+                            ORDER BY confidence_score DESC
+                            LIMIT 2
+                        """)
+                        async with engine.connect() as conn:
+                            rows_fill = await conn.execute(
+                                sql_fill,
+                                {"pid": missing_pid, **kw_params},
+                            )
+                            for r in rows_fill.mappings():
+                                d = dict(r)
+                                if str(d["id"]) not in seen_ids:
+                                    results.append(d)
+                                    seen_ids.add(str(d["id"]))
+                    except Exception as exc:
+                        log.warning("query_portal_fill_failed", portal=missing_pid, error=str(exc))
+
         await engine.dispose()
 
         # Apply diversity then truncate
@@ -772,7 +810,7 @@ async def natural_language_query(body: QueryBody):
 async def list_portals():
     """List all portals with last crawl timestamp, record count, and quality scores."""
     portals = [
-        "statistics_finland", "world_bank", "eurostat", "oecd", "un_data"
+        "statfin", "worldbank", "eurostat", "oecd", "undata"
     ]
     return [
         PortalHealth(
@@ -831,21 +869,13 @@ async def health():
         except Exception as exc:
             log.warning("health_db_query_failed", error=str(exc))
 
-    portal_ids = ["statistics_finland", "world_bank", "eurostat", "oecd", "un_data"]
-    # Map short DB names back to canonical portal_id display names
-    _short_to_display = {
-        "statfin": "statistics_finland",
-        "worldbank": "world_bank",
-        "eurostat": "eurostat",
-        "oecd": "oecd",
-        "undata": "un_data",
-    }
+    # Use the exact portal_id values stored in the DB
+    portal_ids = ["statfin", "worldbank", "eurostat", "oecd", "undata"]
     portals_health = {}
     for pid in portal_ids:
-        short = {v: k for k, v in _short_to_display.items()}.get(pid, pid)
         portals_health[pid] = {
             "status": "unknown",
-            "records": portal_records.get(pid, portal_records.get(short, 0)),
+            "records": portal_records.get(pid, 0),
         }
 
     return {
