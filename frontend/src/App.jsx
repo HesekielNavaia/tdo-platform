@@ -22,8 +22,8 @@ const tokens = {
 };
 
 // ─── API client ───────────────────────────────────────────────────────────────
-const API_BASE = import.meta.env.VITE_API_URL || "";
-const API_KEY  = import.meta.env.VITE_API_KEY  || "dev-key-123";
+const API_BASE = import.meta.env.VITE_API_URL ?? "https://tdo-app-api-dev.mangocliff-4ea581ad.northeurope.azurecontainerapps.io";
+const API_KEY  = import.meta.env.VITE_API_KEY  ?? "tdo-dev-key-63ac09ac2414579c6e5a22d08c86f963";
 
 async function apiFetch(path, options = {}) {
   const res = await fetch(`${API_BASE}${path}`, {
