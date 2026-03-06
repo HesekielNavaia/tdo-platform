@@ -94,7 +94,7 @@ jobs:
           az containerapp update \
             --name tdo-app-api-dev \
             --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-            --image ${{ env.ACR_IMAGE }}:${SHORT_SHA} \
+            --image ${{ env.IMAGE }}:${SHORT_SHA} \
             --set-env-vars "GIT_SHA=${SHORT_SHA}" "DEPLOY_TIME=${DEPLOY_TIME}"
 
       - name: Update harvest job template image
