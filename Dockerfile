@@ -25,10 +25,14 @@ EXPOSE 8000
 
 # Route to the correct entry point based on JOB_NAME:
 #   JOB_NAME=harvest  → run the harvest pipeline job
+#   JOB_NAME=embed    → run the embedding backfill job
+#   JOB_NAME=migrate  → run alembic migrations
 #   anything else     → run the FastAPI server
 CMD ["sh", "-c", \
   "if [ \"$JOB_NAME\" = \"harvest\" ]; then \
      exec python -m src.jobs.harvest; \
+   elif [ \"$JOB_NAME\" = \"embed\" ]; then \
+     exec python -m src.jobs.embed; \
    elif [ \"$JOB_NAME\" = \"migrate\" ]; then \
      exec python -m src.jobs.migrate; \
    else \
