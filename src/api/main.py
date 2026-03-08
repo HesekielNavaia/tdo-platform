@@ -1016,3 +1016,137 @@ async def stats():
         "by_access_type": {},
         "by_resource_type": {},
     }
+
+
+# ---------------------------------------------------------------------------
+# POST /v1/admin/backfill-embeddings
+# ---------------------------------------------------------------------------
+
+class BackfillBody(BaseModel):
+    portal_id: str | None = None   # restrict to one portal, or None for all
+    batch_size: int = 50
+    max_records: int = 5000        # safety cap per invocation
+
+@app.post("/v1/admin/backfill-embeddings")
+async def backfill_embeddings(body: BackfillBody):
+    """
+    Back-fill embedding_vec for records that have NULL embedding_vec.
+    Runs inline (blocks until done) — use max_records to limit runtime.
+    Protected by the standard X-API-Key header.
+    """
+    db_url = _build_db_url()
+    if not db_url:
+        raise HTTPException(status_code=503, detail="Database not configured")
+
+    endpoint = os.environ.get("EMBEDDING_ENDPOINT", "")
+    api_key  = os.environ.get("EMBEDDING_API_KEY", "")
+    if not endpoint:
+        raise HTTPException(status_code=503, detail="EMBEDDING_ENDPOINT not configured")
+    if not endpoint.rstrip("/").endswith(("/v1/embeddings", "/score")):
+        endpoint = endpoint.rstrip("/") + "/v1/embeddings"
+
+    try:
+        import json as _json
+        import httpx
+        from sqlalchemy import text
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        engine = create_async_engine(db_url, echo=False)
+
+        where = "embedding_vec IS NULL"
+        params: dict = {}
+        if body.portal_id:
+            where += " AND portal_id = :portal_id"
+            params["portal_id"] = body.portal_id
+
+        async with engine.connect() as conn:
+            count_row = await conn.execute(text(f"SELECT COUNT(*) FROM datasets WHERE {where}"), params)
+            total_missing = count_row.scalar() or 0
+
+        log.info("backfill_start", missing=total_missing, portal=body.portal_id or "all")
+
+        processed = 0
+        errors = 0
+
+        while processed < body.max_records:
+            remaining = min(body.batch_size, body.max_records - processed)
+            async with engine.connect() as conn:
+                rows = (await conn.execute(
+                    text(f"""
+                        SELECT id, title, description, keywords, themes,
+                               geographic_coverage, publisher
+                        FROM datasets
+                        WHERE {where}
+                        ORDER BY ingestion_timestamp DESC
+                        LIMIT :lim
+                    """),
+                    {**params, "lim": remaining},
+                )).mappings().fetchall()
+
+            if not rows:
+                break
+
+            def _build_text(r) -> str:
+                parts = [
+                    r.get("title") or "",
+                    r.get("description") or "",
+                    " ".join(r.get("keywords") or []),
+                    " ".join(r.get("themes") or []),
+                    " ".join(r.get("geographic_coverage") or []),
+                    r.get("publisher") or "",
+                ]
+                return " ".join(p for p in parts if p).strip()
+
+            texts = [_build_text(dict(r)) for r in rows]
+            ids   = [str(r["id"]) for r in rows]
+
+            try:
+                headers = {"Content-Type": "application/json"}
+                if api_key:
+                    headers["Authorization"] = f"Bearer {api_key}"
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    resp = await client.post(
+                        endpoint,
+                        json={"input": texts, "model": "Cohere-embed-v3-multilingual"},
+                        headers=headers,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    embeddings = (
+                        [item["embedding"] for item in data["data"]]
+                        if "data" in data else data
+                    )
+            except Exception as exc:
+                log.warning("backfill_batch_failed", error=str(exc))
+                errors += len(rows)
+                break
+
+            async with engine.begin() as conn:
+                for row_id, emb in zip(ids, embeddings):
+                    vec_str = "[" + ",".join(str(x) for x in emb) + "]"
+                    await conn.execute(
+                        text("""
+                            UPDATE datasets
+                            SET embedding = :emb_json,
+                                embedding_vec = CAST(:vec AS vector)
+                            WHERE id = CAST(:id AS uuid)
+                        """),
+                        {"emb_json": _json.dumps(emb), "vec": vec_str, "id": row_id},
+                    )
+
+            processed += len(ids)
+            log.info("backfill_batch_done", processed=processed, total_missing=total_missing)
+
+        await engine.dispose()
+        return {
+            "total_missing_before": total_missing,
+            "processed": processed,
+            "errors": errors,
+            "portal_id": body.portal_id or "all",
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log.warning("backfill_failed", error=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc))
