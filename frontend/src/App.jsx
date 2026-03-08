@@ -287,28 +287,39 @@ function inferDatasetUrl(r) {
   return portal || null;
 }
 
+function formatUpdated(dateStr) {
+  if (!dateStr || dateStr === "—") return null;
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return null;
+    return d.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+  } catch { return null; }
+}
+
 // Map API SearchResult to display-friendly shape
 function normaliseResult(result) {
   const r = result.record ?? result;
+  const score = result.similarity_score ?? result.score ?? null;
   return {
     id:           r.id,
     title:        r.title,
     publisher:    r.publisher,
-    portal:       r.source_portal,
-    flag:         portalFlag(r.source_portal),
+    portal:       r.source_portal || r.portal,
+    flag:         portalFlag(r.source_portal || r.portal),
     access:       r.access_type,
     license:      r.license || "—",
-    updated:      r.last_updated || "—",
+    updated:      formatUpdated(r.last_updated),
     frequency:    r.update_frequency || "—",
     formats:      r.formats || [],
     geo:          r.geographic_coverage || [],
     confidence:   Math.round((r.confidence_score ?? 0) * 100),
     completeness: Math.round((r.completeness_score ?? 0) * 100),
     description:  r.description || "",
-    temporal:     [r.temporal_coverage_start, r.temporal_coverage_end].filter(Boolean).join("–") || "—",
+    temporal:     [r.temporal_coverage_start, r.temporal_coverage_end].filter(Boolean).join("–") || null,
     url:          inferDatasetUrl(r),
     themes:       r.themes || [],
     provenance:   r.field_evidence || {},
+    score:        score !== null ? Math.round(score * 100) : null,
   };
 }
 
@@ -326,7 +337,22 @@ function portalFlag(portalId) {
   return flags[(portalId || "").toLowerCase()] || "🌐";
 }
 
+function RelevanceBadge({ score }) {
+  if (score === null || score === undefined) return null;
+  const color = score >= 80 ? tokens.green : score >= 60 ? tokens.electricDim : tokens.gray400;
+  return (
+    <span style={{
+      fontSize: 11, fontWeight: 700, color, fontFamily: "monospace",
+      background: tokens.gray100, borderRadius: 4, padding: "2px 7px",
+    }}>
+      {score}% match
+    </span>
+  );
+}
+
 function DatasetCard({ record, onProvenance }) {
+  const geoText = record.geo.length > 0 ? record.geo.slice(0, 3).join(", ") + (record.geo.length > 3 ? " +" + (record.geo.length - 3) : "") : null;
+
   return (
     <div style={{
       background: tokens.white, border: `1px solid ${tokens.gray200}`,
@@ -336,51 +362,68 @@ function DatasetCard({ record, onProvenance }) {
       onMouseLeave={e => e.currentTarget.style.boxShadow = "none"}
     >
       {/* Card header */}
-      <div style={{ padding: "18px 22px", display: "flex", gap: 16, alignItems: "flex-start" }}>
+      <div style={{ padding: "14px 20px 10px", display: "flex", gap: 14, alignItems: "flex-start" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
-            <span style={{ fontSize: 14 }}>{record.flag}</span>
+          {/* Publisher / access row */}
+          <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap", marginBottom: 5 }}>
+            <span style={{ fontSize: 13 }}>{record.flag}</span>
             <span style={{ fontSize: 12, fontWeight: 600, color: tokens.gray400 }}>{record.publisher}</span>
             <span style={{ color: tokens.gray200 }}>·</span>
             <AccessBadge type={record.access} />
-            <span style={{ color: tokens.gray200 }}>·</span>
-            <span style={{ fontSize: 12, color: tokens.gray400 }}>{record.license}</span>
           </div>
-          <div style={{ fontSize: 17, fontWeight: 800, color: tokens.blue, marginBottom: 6, lineHeight: 1.3 }}>
+          {/* Title */}
+          <div style={{ fontSize: 16, fontWeight: 800, color: tokens.blue, marginBottom: 5, lineHeight: 1.3 }}>
             {record.title}
           </div>
-          <div style={{ fontSize: 13, color: tokens.gray600, lineHeight: 1.6 }}>
-            {record.description}
-          </div>
+          {/* Description — max 2 lines */}
+          {record.description && (
+            <div style={{
+              fontSize: 13, color: tokens.gray600, lineHeight: 1.55,
+              display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
+              overflow: "hidden",
+            }}>
+              {record.description}
+            </div>
+          )}
         </div>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, flexShrink: 0 }}>
+        {/* Right column: relevance + confidence */}
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5, flexShrink: 0, minWidth: 90 }}>
           <ConfidencePill score={record.confidence} />
-          <div style={{ fontSize: 11, color: tokens.gray400, textAlign: "right" }}>
-            Updated {record.updated}
-          </div>
-          <div style={{ fontSize: 11, color: tokens.gray400, textAlign: "right" }}>
-            {record.frequency}
-          </div>
+          <RelevanceBadge score={record.score} />
         </div>
       </div>
 
       {/* Meta row */}
       <div style={{
-        padding: "10px 22px", borderTop: `1px solid ${tokens.gray100}`,
-        background: tokens.offWhite, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+        padding: "8px 20px", borderTop: `1px solid ${tokens.gray100}`,
+        background: tokens.offWhite, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
       }}>
         <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
           {record.formats.map(f => <FormatTag key={f} fmt={f} />)}
         </div>
         <div style={{ flex: 1 }} />
-        <div style={{ fontSize: 11, color: tokens.gray400 }}>
-          🗺 {record.geo.join(", ")} · {record.temporal}
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          {record.updated && (
+            <span style={{ fontSize: 11, color: tokens.gray400 }}>
+              Updated: {record.updated}
+            </span>
+          )}
+          {geoText && (
+            <span style={{ fontSize: 11, color: tokens.gray400 }}>
+              🗺 {geoText}
+            </span>
+          )}
+          {record.temporal && (
+            <span style={{ fontSize: 11, color: tokens.gray400 }}>
+              📅 {record.temporal}
+            </span>
+          )}
         </div>
       </div>
 
-      {/* Themes */}
+      {/* Footer: themes + action buttons */}
       <div style={{
-        padding: "8px 22px 10px", borderTop: `1px solid ${tokens.gray100}`,
+        padding: "7px 20px 9px", borderTop: `1px solid ${tokens.gray100}`,
         display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
       }}>
         {record.themes.map(t => (
@@ -445,6 +488,7 @@ export default function TDOApp() {
   const [pageSize, setPageSize]     = useState(20);
   const [currentOffset, setCurrentOffset] = useState(0);
   const [hasMore, setHasMore]       = useState(false);
+  const [sortBy, setSortBy]         = useState("relevance"); // relevance | date_desc | date_asc | title
 
   // Dashboard state
   const [portals, setPortals]       = useState([]);
@@ -501,7 +545,14 @@ export default function TDOApp() {
     : (stats?.avg_confidence ? Math.round(stats.avg_confidence * 100) : 0);
   const maxPortalCount = portals.reduce((m, p) => Math.max(m, p.count), 1);
 
-  const handleSearch = useCallback(async (q, limit = pageSize) => {
+  function buildSortParams(sort) {
+    if (sort === "date_desc") return { sort: "date",  order: "desc" };
+    if (sort === "date_asc")  return { sort: "date",  order: "asc"  };
+    if (sort === "title")     return { sort: "title", order: "asc"  };
+    return {};
+  }
+
+  const handleSearch = useCallback(async (q, limit = pageSize, sort = sortBy) => {
     const qUsed = (q || query).trim();
     if (!qUsed) return;
     setSearchLoading(true);
@@ -512,7 +563,7 @@ export default function TDOApp() {
     setHasMore(false);
 
     try {
-      const params = new URLSearchParams({ q: qUsed, limit: String(limit), offset: "0" });
+      const params = new URLSearchParams({ q: qUsed, limit: String(limit), offset: "0", ...buildSortParams(sort) });
       const data   = await apiFetch(`/v1/datasets?${params}`);
       const items  = Array.isArray(data) ? data : (data.results || data.datasets || []);
       const normalized = items.map(normaliseResult);
@@ -539,14 +590,14 @@ export default function TDOApp() {
         // AI summary is best-effort; don't surface error to user
       })
       .finally(() => setAiLoading(false));
-  }, [query, pageSize]);
+  }, [query, pageSize, sortBy]);
 
   const handleLoadMore = useCallback(async () => {
     if (!submitted || searchLoading) return;
     setSearchLoading(true);
     setSearchError(null);
     try {
-      const params = new URLSearchParams({ q: submitted, limit: String(pageSize), offset: String(currentOffset) });
+      const params = new URLSearchParams({ q: submitted, limit: String(pageSize), offset: String(currentOffset), ...buildSortParams(sortBy) });
       const data   = await apiFetch(`/v1/datasets?${params}`);
       const items  = Array.isArray(data) ? data : (data.results || data.datasets || []);
       const normalized = items.map(normaliseResult);
@@ -558,7 +609,7 @@ export default function TDOApp() {
     } finally {
       setSearchLoading(false);
     }
-  }, [submitted, currentOffset, pageSize, searchLoading]);
+  }, [submitted, currentOffset, pageSize, searchLoading, sortBy]);
 
   const EXAMPLE_QUERIES = [
     "unemployment statistics Finland",
@@ -759,8 +810,25 @@ export default function TDOApp() {
                 <div style={{ fontSize: 13, color: tokens.gray400, marginBottom: 16, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   <span style={{ fontWeight: 700, color: tokens.gray900 }}>{results.length} datasets</span>
                   found for <strong>"{submitted}"</strong>
-                  <span>· ranked by relevance and confidence</span>
-                  <div style={{ marginLeft: "auto" }}>
+                  <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
+                    <select
+                      value={sortBy}
+                      onChange={e => {
+                        const newSort = e.target.value;
+                        setSortBy(newSort);
+                        handleSearch(submitted, pageSize, newSort);
+                      }}
+                      style={{
+                        border: `1px solid ${tokens.gray200}`, borderRadius: 6,
+                        padding: "4px 8px", fontSize: 12, color: tokens.gray600,
+                        background: tokens.white, cursor: "pointer", fontFamily: "inherit",
+                      }}
+                    >
+                      <option value="relevance">Relevance</option>
+                      <option value="date_desc">Newest first</option>
+                      <option value="date_asc">Oldest first</option>
+                      <option value="title">Alphabetical</option>
+                    </select>
                     <select
                       value={pageSize}
                       onChange={e => {

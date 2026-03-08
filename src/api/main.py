@@ -293,6 +293,8 @@ async def list_datasets(
     min_confidence: float = Query(0.5, ge=0.0, le=1.0),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
+    sort: Optional[str] = Query(None, description="Sort field: relevance | date | title"),
+    order: Optional[str] = Query(None, description="Sort order: asc | desc"),
 ):
     """Search datasets using hybrid semantic + keyword search."""
     db_url = _build_db_url()
@@ -480,6 +482,22 @@ async def list_datasets(
         else:
             results = results[:limit]
 
+        # Apply client-requested sort (overrides relevance ranking)
+        if sort == "date":
+            reverse = (order or "desc") != "asc"
+            results = sorted(
+                results,
+                key=lambda r: r.record.last_updated or "",
+                reverse=reverse,
+            )
+        elif sort == "title":
+            reverse = (order or "asc") == "desc"
+            results = sorted(
+                results,
+                key=lambda r: (r.record.title or "").lower(),
+                reverse=reverse,
+            )
+
         return results
 
     except Exception as exc:
@@ -576,6 +594,8 @@ class QueryBody(BaseModel):
     query: str | None = None   # alias accepted for backwards compat
     portal: str | None = None
     limit: int = 10
+    sort: str | None = None    # relevance | date | title
+    order: str | None = None   # asc | desc
 
 
 # Maps user-facing portal name variants to canonical short names stored in DB
@@ -672,7 +692,8 @@ async def natural_language_query(body: QueryBody):
             try:
                 sql = text(f"""
                     SELECT id, source_id, portal_id, title, description, dataset_url,
-                           publisher, confidence_score,
+                           publisher, confidence_score, last_updated,
+                           geographic_coverage, temporal_coverage_start, temporal_coverage_end,
                            1 - (embedding_vec <=> CAST(:vec AS vector)) AS score
                     FROM datasets
                     WHERE {where}
@@ -688,19 +709,24 @@ async def natural_language_query(body: QueryBody):
             except Exception as exc:
                 log.warning("query_semantic_failed", error=str(exc))
 
-        # FTS supplement — always runs to include portals without embeddings
+        # FTS supplement — always runs to include portals without embeddings.
+        # Use OR semantics: split the query into words and join with " OR " so
+        # websearch_to_tsquery matches documents containing ANY of the words.
+        fts_words = [w.strip() for w in question.split() if len(w.strip()) >= 3][:8]
+        q_or = " OR ".join(fts_words) if fts_words else question
         fts_where = "confidence_score >= 0.3"
-        params2: dict = {"q": question, "limit": limit * 3}
+        params2: dict = {"q_or": q_or, "limit": limit * 3}
         if portal_filter_val:
             fts_where += " AND portal_id = :portal"
             params2["portal"] = portal_filter_val
         try:
             sql2 = text(f"""
                 SELECT id, source_id, portal_id, title, description, dataset_url,
-                       publisher, confidence_score,
-                       ts_rank(fts_doc, plainto_tsquery('english', :q)) AS score
+                       publisher, confidence_score, last_updated,
+                       geographic_coverage, temporal_coverage_start, temporal_coverage_end,
+                       ts_rank(fts_doc, websearch_to_tsquery('english', :q_or)) AS score
                 FROM datasets
-                WHERE {fts_where} AND fts_doc @@ plainto_tsquery('english', :q)
+                WHERE {fts_where} AND fts_doc @@ websearch_to_tsquery('english', :q_or)
                 ORDER BY score DESC
                 LIMIT :limit
             """)
@@ -714,8 +740,10 @@ async def natural_language_query(body: QueryBody):
         except Exception as exc:
             log.warning("query_fts_failed", error=str(exc))
 
-        # Portal fill: ensure every portal appears in the candidate pool
-        if not portal_filter_val and results:
+        # Portal fill: ensure every portal appears in the candidate pool.
+        # Always runs (even when FTS returned 0 results) so ILIKE serves as
+        # a last-resort fallback when the FTS index has no match.
+        if not portal_filter_val:
             portals_in_pool = {r.get("portal_id", "") for r in results}
             all_portals = {"statfin", "worldbank", "eurostat", "oecd", "undata"}
             missing = all_portals - portals_in_pool
@@ -732,7 +760,9 @@ async def natural_language_query(body: QueryBody):
                     try:
                         sql_fill = text(f"""
                             SELECT id, source_id, portal_id, title, description, dataset_url,
-                                   publisher, confidence_score, confidence_score AS score
+                                   publisher, confidence_score, last_updated,
+                                   geographic_coverage, temporal_coverage_start, temporal_coverage_end,
+                                   confidence_score AS score
                             FROM datasets
                             WHERE confidence_score >= 0.3 AND portal_id = :pid
                               AND ({ilike_clauses})
@@ -778,15 +808,34 @@ async def natural_language_query(body: QueryBody):
         else:
             results = results[:limit]
 
+        # Apply client-requested sort before formatting
+        sort_by = body.sort
+        sort_order = body.order
+        if sort_by == "date":
+            reverse = (sort_order or "desc") != "asc"
+            results = sorted(results, key=lambda r: str(r.get("last_updated") or ""), reverse=reverse)
+        elif sort_by == "title":
+            reverse = (sort_order or "asc") == "desc"
+            results = sorted(results, key=lambda r: (r.get("title") or "").lower(), reverse=reverse)
+
+        def _lst_str(v) -> list[str]:
+            if isinstance(v, list):
+                return [str(x) for x in v if x is not None]
+            return []
+
         formatted = [
             {
-                "id":          str(r["id"]),
-                "title":       r.get("title") or "",
-                "portal":      r.get("portal_id") or "",
-                "url":         r.get("dataset_url") or "",
-                "description": r.get("description") or "",
-                "publisher":   r.get("publisher") or "",
-                "score":       round(float(r.get("score") or 0), 4),
+                "id":                      str(r["id"]),
+                "title":                   r.get("title") or "",
+                "portal":                  r.get("portal_id") or "",
+                "url":                     r.get("dataset_url") or "",
+                "description":             r.get("description") or "",
+                "publisher":               r.get("publisher") or "",
+                "score":                   round(float(r.get("score") or 0), 4),
+                "last_updated":            str(r["last_updated"]) if r.get("last_updated") else None,
+                "geographic_coverage":     _lst_str(r.get("geographic_coverage")),
+                "temporal_coverage_start": str(r["temporal_coverage_start"]) if r.get("temporal_coverage_start") else None,
+                "temporal_coverage_end":   str(r["temporal_coverage_end"]) if r.get("temporal_coverage_end") else None,
             }
             for r in results
         ]
