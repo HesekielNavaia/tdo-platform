@@ -21,7 +21,7 @@ WB_TOPICS_URL = f"{WB_BASE_URL}/topics"
 
 
 class WorldBankAdapter(BasePortalAdapter):
-    portal_id = "world_bank"
+    portal_id = "worldbank"
     base_url = WB_BASE_URL
     rate_limit_rps = 1.0
     adapter_type = "api"

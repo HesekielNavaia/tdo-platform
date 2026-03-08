@@ -128,7 +128,7 @@ class Indexer:
                     temporal_coverage_end, languages, update_frequency, last_updated,
                     access_type, access_conditions, license, formats, contact_point,
                     provenance, metadata_standard, confidence_score, completeness_score,
-                    freshness_score, link_healthy, ingestion_timestamp, embedding
+                    freshness_score, link_healthy, ingestion_timestamp, embedding, embedding_vec
                 ) VALUES (
                     :id, :source_id, :portal_id, :resource_type, :title, :description,
                     :publisher, :publisher_type, :source_portal, :dataset_url,
@@ -136,7 +136,8 @@ class Indexer:
                     :temporal_coverage_end, :languages, :update_frequency, :last_updated,
                     :access_type, :access_conditions, :license, :formats, :contact_point,
                     :provenance, :metadata_standard, :confidence_score, :completeness_score,
-                    :freshness_score, :link_healthy, :ingestion_timestamp, :embedding
+                    :freshness_score, :link_healthy, :ingestion_timestamp, :embedding,
+                    CAST(:embedding AS vector)
                 )
             """),
             {
@@ -185,7 +186,8 @@ class Indexer:
                     freshness_score = :freshness_score,
                     link_healthy = :link_healthy,
                     ingestion_timestamp = :ingestion_timestamp,
-                    embedding = :embedding
+                    embedding = :embedding,
+                    embedding_vec = CAST(:embedding AS vector)
                 WHERE id = :id
             """),
             params

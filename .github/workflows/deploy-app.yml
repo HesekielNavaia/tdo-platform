@@ -87,6 +87,16 @@ jobs:
           tenant-id: ${{ env.AZURE_TENANT_ID }}
           subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Restore required secrets
+        run: |
+          az containerapp secret set \
+            --name tdo-app-api-dev \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --secrets \
+              "tdo-api-keys=${{ secrets.TDO_API_KEYS }}" \
+              "embedder-endpoint=${{ secrets.EMBEDDER_ENDPOINT }}" \
+              "embedder-key=${{ secrets.EMBEDDER_KEY }}"
+
       - name: Update Container App revision
         run: |
           SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-8)
@@ -95,7 +105,12 @@ jobs:
             --name tdo-app-api-dev \
             --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
             --image ${{ env.IMAGE }}:${SHORT_SHA} \
-            --set-env-vars "GIT_SHA=${SHORT_SHA}" "DEPLOY_TIME=${DEPLOY_TIME}"
+            --set-env-vars \
+              "GIT_SHA=${SHORT_SHA}" \
+              "DEPLOY_TIME=${DEPLOY_TIME}" \
+              "TDO_API_KEYS=secretref:tdo-api-keys" \
+              "EMBEDDING_ENDPOINT=secretref:embedder-endpoint" \
+              "EMBEDDING_API_KEY=secretref:embedder-key"
 
       - name: Update harvest job template image
         run: |

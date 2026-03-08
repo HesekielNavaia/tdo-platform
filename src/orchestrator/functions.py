@@ -411,9 +411,11 @@ def _get_adapter(portal_id: str):
     adapters = {
         "statistics_finland": StatisticsFinlandAdapter,
         "world_bank": WorldBankAdapter,
+        "worldbank": WorldBankAdapter,
         "eurostat": EurostatAdapter,
         "oecd": OECDAdapter,
         "un_data": UNDataAdapter,
+        "undata": UNDataAdapter,
     }
     cls = adapters.get(portal_id)
     if not cls:
