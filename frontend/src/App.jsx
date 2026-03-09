@@ -488,6 +488,7 @@ export default function TDOApp() {
   const [pageSize, setPageSize]     = useState(20);
   const [currentOffset, setCurrentOffset] = useState(0);
   const [hasMore, setHasMore]       = useState(false);
+  const [totalCount, setTotalCount] = useState(null);
   const [sortBy, setSortBy]         = useState("relevance"); // relevance | date_desc | date_asc | title
 
   // Dashboard state
@@ -561,6 +562,7 @@ export default function TDOApp() {
     setAiAnswer("");
     setCurrentOffset(0);
     setHasMore(false);
+    setTotalCount(null);
 
     try {
       const params = new URLSearchParams({ q: qUsed, limit: String(limit), offset: "0", ...buildSortParams(sort) });
@@ -570,6 +572,7 @@ export default function TDOApp() {
       setResults(normalized);
       setCurrentOffset(normalized.length);
       setHasMore(normalized.length === limit);
+      setTotalCount(data.total ?? null);
     } catch (err) {
       setSearchError("Search is temporarily unavailable. Please try again in a moment.");
       setResults([]);
@@ -808,7 +811,7 @@ export default function TDOApp() {
             {!searchLoading && results.length > 0 && (
               <div>
                 <div style={{ fontSize: 13, color: tokens.gray400, marginBottom: 16, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <span style={{ fontWeight: 700, color: tokens.gray900 }}>{results.length} datasets</span>
+                  <span style={{ fontWeight: 700, color: tokens.gray900 }}>{totalCount ?? results.length} datasets</span>
                   found for <strong>"{submitted}"</strong>
                   <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
                     <select
@@ -878,7 +881,9 @@ export default function TDOApp() {
                 )}
                 {!hasMore && results.length > 0 && (
                   <div style={{ textAlign: "center", marginTop: 20, fontSize: 12, color: tokens.gray400 }}>
-                    All {results.length} results shown
+                    {totalCount != null && totalCount > results.length
+                      ? `Showing ${results.length} of ${totalCount} results`
+                      : `All ${results.length} results shown`}
                   </div>
                 )}
               </div>

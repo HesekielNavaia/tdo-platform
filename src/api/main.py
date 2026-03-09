@@ -18,6 +18,7 @@ from src.models.mvm import (
     MVMRecord,
     SearchFilters,
     SearchResult,
+    DatasetListResponse,
     PortalHealth,
 )
 
@@ -279,7 +280,7 @@ def _row_to_search_result(row, similarity: float, channel: str) -> SearchResult:
     return SearchResult(record=mvm, similarity_score=min(1.0, max(0.0, similarity)), search_channel=channel)
 
 
-@app.get("/v1/datasets", response_model=list[SearchResult])
+@app.get("/v1/datasets", response_model=DatasetListResponse)
 async def list_datasets(
     q: Optional[str] = Query(None, description="Natural language search query"),
     geo: Optional[str] = Query(None, description="ISO 3166 codes, comma-separated"),
@@ -299,7 +300,7 @@ async def list_datasets(
     """Search datasets using hybrid semantic + keyword search."""
     db_url = _build_db_url()
     if not db_url:
-        return []
+        return DatasetListResponse(results=[], total=0)
 
     try:
         from sqlalchemy import text
@@ -498,11 +499,33 @@ async def list_datasets(
                 reverse=reverse,
             )
 
-        return results
+        # COUNT total matching records (independent of limit/offset)
+        total = len(seen_ids)
+        try:
+            count_params = {k: v for k, v in params.items() if k not in ("limit", "offset")}
+            if q:
+                words_cnt = [w.strip() for w in q.split() if w.strip()][:4]
+                ilike_cnt = " OR ".join(
+                    f"title ILIKE :cnt_kw{i} OR description ILIKE :cnt_kw{i}"
+                    for i in range(len(words_cnt))
+                )
+                cnt_kw_params = {f"cnt_kw{i}": f"%{w}%" for i, w in enumerate(words_cnt)}
+                fts_or_ilike = f"fts_doc @@ plainto_tsquery('english', :q) OR ({ilike_cnt})"
+                count_sql = text(f"SELECT COUNT(*) FROM datasets WHERE {where} AND ({fts_or_ilike})")
+                async with engine.connect() as conn:
+                    total = (await conn.execute(count_sql, {**count_params, "q": q, **cnt_kw_params})).scalar() or 0
+            else:
+                count_sql = text(f"SELECT COUNT(*) FROM datasets WHERE {where}")
+                async with engine.connect() as conn:
+                    total = (await conn.execute(count_sql, count_params)).scalar() or 0
+        except Exception as exc:
+            log.warning("count_query_failed", error=str(exc))
+
+        return DatasetListResponse(results=results, total=total)
 
     except Exception as exc:
         log.warning("search_failed", error=str(exc))
-        return []
+        return DatasetListResponse(results=[], total=0)
 
 
 # ---------------------------------------------------------------------------
@@ -635,7 +658,7 @@ async def _openai_summarise(question: str, snippets: list[str]) -> str:
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(
                 chat_url,
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                headers={"api-key": api_key, "Content-Type": "application/json"},
                 json={
                     "messages": [
                         {"role": "system", "content": system},

@@ -95,7 +95,9 @@ jobs:
             --secrets \
               "tdo-api-keys=${{ secrets.TDO_API_KEYS }}" \
               "embedder-endpoint=${{ secrets.EMBEDDER_ENDPOINT }}" \
-              "embedder-key=${{ secrets.EMBEDDER_KEY }}"
+              "embedder-key=${{ secrets.EMBEDDER_KEY }}" \
+              "openai-endpoint=${{ secrets.OPENAI_ENDPOINT }}" \
+              "openai-key=${{ secrets.OPENAI_KEY }}"
 
       - name: Update Container App revision
         run: |
@@ -110,7 +112,9 @@ jobs:
               "DEPLOY_TIME=${DEPLOY_TIME}" \
               "TDO_API_KEYS=secretref:tdo-api-keys" \
               "EMBEDDING_ENDPOINT=secretref:embedder-endpoint" \
-              "EMBEDDING_API_KEY=secretref:embedder-key"
+              "EMBEDDING_API_KEY=secretref:embedder-key" \
+              "OPENAI_ENDPOINT=secretref:openai-endpoint" \
+              "OPENAI_API_KEY=secretref:openai-key"
 
       - name: Update harvest job template image
         run: |

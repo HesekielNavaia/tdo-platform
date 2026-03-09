@@ -237,6 +237,11 @@ class SearchResult(BaseModel):
     search_channel: str | None = None  # "semantic", "keyword", or "hybrid"
 
 
+class DatasetListResponse(BaseModel):
+    results: list[SearchResult]
+    total: int
+
+
 class PortalHealth(BaseModel):
     portal_id: str
     status: Literal["healthy", "degraded", "unhealthy", "unknown"]
