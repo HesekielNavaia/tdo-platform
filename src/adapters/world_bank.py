@@ -94,6 +94,9 @@ class WorldBankAdapter(BasePortalAdapter):
                             **self.get_portal_defaults(),
                             "id": ind_id,
                             "name": ind.get("name", ""),
+                            # Keep 'sourceNote' key so schema_detector identifies WorldBank schema
+                            "sourceNote": ind.get("sourceNote", ""),
+                            # 'description' maps to MVMRecord.description via WORLDBANK_TO_MVM
                             "description": ind.get("sourceNote", ""),
                             # 'url' maps to dataset_url in WORLDBANK_TO_MVM
                             "url": f"https://data.worldbank.org/indicator/{ind_id}",

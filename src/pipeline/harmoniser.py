@@ -149,7 +149,8 @@ class Harmoniser:
         # Detect schema
         schema_type = detect_schema(enriched)
         if schema_type == "unknown":
-            schema_type = defaults.get("_schema_detected", "unknown")
+            # Check enriched payload first (adapter may have injected _schema_detected)
+            schema_type = enriched.get("_schema_detected") or defaults.get("_schema_detected", "unknown")
 
         # Apply deterministic mapping
         mapped, field_evidence, field_confidence = self._apply_deterministic_mapping(
