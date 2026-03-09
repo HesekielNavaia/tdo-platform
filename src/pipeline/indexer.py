@@ -137,7 +137,7 @@ class Indexer:
                     :access_type, :access_conditions, :license, :formats, :contact_point,
                     :provenance, :metadata_standard, :confidence_score, :completeness_score,
                     :freshness_score, :link_healthy, :ingestion_timestamp, :embedding,
-                    CAST(:embedding AS vector)
+                    CAST(:embedding_vec AS vector)
                 )
             """),
             {
@@ -187,7 +187,7 @@ class Indexer:
                     link_healthy = :link_healthy,
                     ingestion_timestamp = :ingestion_timestamp,
                     embedding = :embedding,
-                    embedding_vec = CAST(:embedding AS vector)
+                    embedding_vec = CAST(:embedding_vec AS vector)
                 WHERE id = :id
             """),
             params
@@ -270,4 +270,5 @@ class Indexer:
             "link_healthy": record.link_healthy,
             "ingestion_timestamp": record.ingestion_timestamp,
             "embedding": json.dumps(embedding),
+            "embedding_vec": "[" + ",".join(str(x) for x in embedding) + "]",
         }
