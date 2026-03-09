@@ -19,6 +19,9 @@ WB_BASE_URL = "https://api.worldbank.org/v2"
 WB_SOURCES_URL = f"{WB_BASE_URL}/sources"
 WB_TOPICS_URL = f"{WB_BASE_URL}/topics"
 
+# Source IDs to harvest indicators from (WDI=2 is the flagship database)
+WB_INDICATOR_SOURCES = ["2"]  # World Development Indicators (1,500+ indicators)
+
 
 class WorldBankAdapter(BasePortalAdapter):
     portal_id = "worldbank"
@@ -67,6 +70,41 @@ class WorldBankAdapter(BasePortalAdapter):
                 if page >= total_pages:
                     break
                 page += 1
+
+        # Yield individual indicators from key WB sources (WDI = 1,500+ indicators)
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            for src_id in WB_INDICATOR_SOURCES:
+                ind_page = 1
+                while True:
+                    resp = await self._rate_limited_get(
+                        client,
+                        f"{WB_BASE_URL}/sources/{src_id}/indicators",
+                        params={"format": "json", "per_page": 500, "page": ind_page},
+                    )
+                    data = resp.json()
+                    if not isinstance(data, list) or len(data) < 2:
+                        break
+                    meta = data[0]
+                    indicators = data[1] or []
+                    for ind in indicators:
+                        ind_id = ind.get("id", "")
+                        if not ind_id:
+                            continue
+                        enriched = {
+                            **self.get_portal_defaults(),
+                            "id": ind_id,
+                            "name": ind.get("name", ""),
+                            "description": ind.get("sourceNote", ""),
+                            # 'url' maps to dataset_url in WORLDBANK_TO_MVM
+                            "url": f"https://data.worldbank.org/indicator/{ind_id}",
+                            # '_topics' maps to keywords in WORLDBANK_TO_MVM
+                            "_topics": [t.get("value", "").strip() for t in ind.get("topics", []) if t.get("value")],
+                        }
+                        yield self._make_record(ind_id, enriched)
+                    total_pages = int(meta.get("pages", 1))
+                    if ind_page >= total_pages:
+                        break
+                    ind_page += 1
 
     async def fetch_record(self, source_id: str) -> RawRecord:
         """Fetch a single World Bank data source by ID."""
