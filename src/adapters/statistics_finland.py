@@ -97,9 +97,9 @@ class StatisticsFinlandAdapter(BasePortalAdapter):
         else:
             db, subject, table = "StatFin", "", viewer_path
         if subject:
-            dataset_url = f"https://pxdata.stat.fi/PXWeb/pxweb/en/{db}/{db}__{subject}/{table}"
+            dataset_url = f"https://pxdata.stat.fi/PxWeb/pxweb/en/{db}/{db}__{subject}/{table}"
         else:
-            dataset_url = f"https://pxdata.stat.fi/PXWeb/pxweb/en/{db}/{table}"
+            dataset_url = f"https://pxdata.stat.fi/PxWeb/pxweb/en/{db}/{table}"
         enriched = {
             **self.get_portal_defaults(),
             "pxweb_path": source_id,

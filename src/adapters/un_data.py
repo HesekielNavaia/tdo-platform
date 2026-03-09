@@ -171,7 +171,7 @@ class UNDataAdapter(BasePortalAdapter):
                     results.append({
                         "dataflow_id": df_id,
                         "agencyID": agency_id,
-                        "_dataset_url": f"https://data.un.org/SdmxBrowser/start?df[id]={df_id}&df[ag]={agency_id}" if agency_id == "UNSD" else f"https://unstats.un.org/sdgs/",
+                        "_dataset_url": f"https://data.un.org/Data.aspx?d={agency_id}&f=series%3A{df_id}" if agency_id == "UNSD" else f"https://data.un.org/Data.aspx?d={agency_id}",
                         "data": {
                             "dataflows": [{
                                 "id": df_id,

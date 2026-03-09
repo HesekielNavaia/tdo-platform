@@ -107,7 +107,7 @@ class EurostatAdapter(BasePortalAdapter):
                 results.append({
                     "dataflow_id": df_id,
                     "agencyID": agency_id,
-                    "_dataset_url": f"https://ec.europa.eu/eurostat/databrowser/explore/all/all_themes?lang=en&display=list&sort=category&extractionId={df_id}",
+                    "_dataset_url": f"https://ec.europa.eu/eurostat/databrowser/view/{df_id}/default/table",
                     "data": {
                         "dataflows": [{
                             "id": df_id,

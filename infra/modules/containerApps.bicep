@@ -151,12 +151,18 @@ resource jobHarvest 'Microsoft.App/jobs@2024-03-01' = {
         parallelism: 1
         replicaCompletionCount: 1
       }
+      registries: initialDeploy ? [] : [
+        {
+          server: acrLoginServer
+          identity: identityHarvestId
+        }
+      ]
     }
     template: {
       containers: [
         {
           name: 'harvest'
-          image: initialDeploy ? placeholderImage : '${acrLoginServer}/tdo/harvest:latest'
+          image: initialDeploy ? placeholderImage : '${acrLoginServer}/tdo-api:latest'
           resources: {
             cpu: json('0.5')
             memory: '1Gi'
@@ -200,12 +206,18 @@ resource jobHarmonise 'Microsoft.App/jobs@2024-03-01' = {
         parallelism: 1
         replicaCompletionCount: 1
       }
+      registries: initialDeploy ? [] : [
+        {
+          server: acrLoginServer
+          identity: identityHarmoniseId
+        }
+      ]
     }
     template: {
       containers: [
         {
           name: 'harmonise'
-          image: initialDeploy ? placeholderImage : '${acrLoginServer}/tdo/harmonise:latest'
+          image: initialDeploy ? placeholderImage : '${acrLoginServer}/tdo-api:latest'
           resources: {
             cpu: json('1.0')
             memory: '2Gi'
@@ -249,12 +261,18 @@ resource jobEmbed 'Microsoft.App/jobs@2024-03-01' = {
         parallelism: 1
         replicaCompletionCount: 1
       }
+      registries: initialDeploy ? [] : [
+        {
+          server: acrLoginServer
+          identity: identityEmbedId
+        }
+      ]
     }
     template: {
       containers: [
         {
           name: 'embed'
-          image: initialDeploy ? placeholderImage : '${acrLoginServer}/tdo/embed:latest'
+          image: initialDeploy ? placeholderImage : '${acrLoginServer}/tdo-api:latest'
           resources: {
             cpu: json('2.0')
             memory: '4Gi'
