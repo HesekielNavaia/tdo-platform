@@ -1,0 +1,307 @@
+name: Nightly Pipeline
+
+on:
+  schedule:
+    - cron: '0 2 * * *'   # 02:00 UTC every night
+  workflow_dispatch:
+    inputs:
+      portals:
+        description: 'Portals to harvest — comma-separated or "all"'
+        default: 'all'
+        required: false
+      skip_embed:
+        description: 'Skip embedding step (true/false)'
+        default: 'false'
+        required: false
+      skip_harmonise:
+        description: 'Skip harmonisation step (true/false)'
+        default: 'false'
+        required: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AZURE_RESOURCE_GROUP: 'tdo-platform-dev'
+  AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+
+# ── Shared poll function (written to a file reused across jobs) ───────────────
+# Each job re-defines poll_job() inline to avoid cross-job file sharing.
+
+jobs:
+  # ── 1. HARVEST ──────────────────────────────────────────────────────────────
+  harvest:
+    name: Harvest
+    runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.run.outputs.result }}
+
+    steps:
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve portal list
+        id: portals
+        run: |
+          INPUT="${{ github.event.inputs.portals || 'all' }}"
+          if [ "$INPUT" = "all" ]; then
+            echo "list=statfin eurostat worldbank oecd undata" >> "$GITHUB_OUTPUT"
+          else
+            # Convert comma-separated → space-separated
+            echo "list=$(echo "$INPUT" | tr ',' ' ')" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run harvest for each portal
+        id: run
+        env:
+          PORTALS: ${{ steps.portals.outputs.list }}
+        run: |
+          RG="${{ env.AZURE_RESOURCE_GROUP }}"
+          JOB="tdo-job-harvest-dev"
+          MAX_WAIT=60   # minutes
+          INTERVAL=60   # seconds
+          MAX_ATTEMPTS=$(( MAX_WAIT * 60 / INTERVAL ))
+
+          poll_job() {
+            local exec_name="$1"
+            local attempts=0
+            while [ $attempts -lt $MAX_ATTEMPTS ]; do
+              attempts=$(( attempts + 1 ))
+              STATUS=$(az containerapp job execution show \
+                --name "$JOB" \
+                --resource-group "$RG" \
+                --job-execution-name "$exec_name" \
+                --query "properties.status" -o tsv 2>/dev/null)
+              echo "  [${attempts}/${MAX_ATTEMPTS}] $exec_name → $STATUS"
+              if [ "$STATUS" = "Succeeded" ]; then
+                return 0
+              elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Stopped" ]; then
+                echo "  ERROR: execution $exec_name ended with status $STATUS"
+                return 1
+              fi
+              sleep $INTERVAL
+            done
+            echo "  ERROR: timeout after ${MAX_WAIT} minutes for $exec_name"
+            return 1
+          }
+
+          FAILED_PORTALS=""
+          for PORTAL in $PORTALS; do
+            echo "──────────────────────────────────────────"
+            echo "Starting harvest for portal: $PORTAL"
+            EXEC_NAME=$(az containerapp job start \
+              --name "$JOB" \
+              --resource-group "$RG" \
+              --env-vars "PORTAL_ID=$PORTAL" \
+              --output json 2>/dev/null | jq -r '.name // empty')
+
+            if [ -z "$EXEC_NAME" ]; then
+              echo "ERROR: failed to start job for portal $PORTAL"
+              FAILED_PORTALS="$FAILED_PORTALS $PORTAL"
+              continue
+            fi
+
+            echo "Execution: $EXEC_NAME — polling every ${INTERVAL}s (max ${MAX_WAIT}m)"
+            if ! poll_job "$EXEC_NAME"; then
+              FAILED_PORTALS="$FAILED_PORTALS $PORTAL"
+            fi
+          done
+
+          if [ -n "$FAILED_PORTALS" ]; then
+            echo "result=failed" >> "$GITHUB_OUTPUT"
+            echo "FAILED portals:$FAILED_PORTALS"
+            exit 1
+          fi
+          echo "result=success" >> "$GITHUB_OUTPUT"
+          echo "All portals harvested successfully."
+
+  # ── 2. EMBED ────────────────────────────────────────────────────────────────
+  embed:
+    name: Embed
+    needs: harvest
+    if: ${{ github.event.inputs.skip_embed != 'true' }}
+    runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.run.outputs.result }}
+
+    steps:
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Run embed job
+        id: run
+        run: |
+          RG="${{ env.AZURE_RESOURCE_GROUP }}"
+          JOB="tdo-job-embed-dev"
+          MAX_WAIT=90   # minutes — embedding all portals can take longer
+          INTERVAL=60
+          MAX_ATTEMPTS=$(( MAX_WAIT * 60 / INTERVAL ))
+
+          echo "Starting embed job…"
+          EXEC_NAME=$(az containerapp job start \
+            --name "$JOB" \
+            --resource-group "$RG" \
+            --output json 2>/dev/null | jq -r '.name // empty')
+
+          if [ -z "$EXEC_NAME" ]; then
+            echo "ERROR: failed to start embed job"
+            echo "result=failed" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          echo "Execution: $EXEC_NAME — polling every ${INTERVAL}s (max ${MAX_WAIT}m)"
+          attempts=0
+          while [ $attempts -lt $MAX_ATTEMPTS ]; do
+            attempts=$(( attempts + 1 ))
+            STATUS=$(az containerapp job execution show \
+              --name "$JOB" \
+              --resource-group "$RG" \
+              --job-execution-name "$EXEC_NAME" \
+              --query "properties.status" -o tsv 2>/dev/null)
+            echo "  [${attempts}/${MAX_ATTEMPTS}] $EXEC_NAME → $STATUS"
+            if [ "$STATUS" = "Succeeded" ]; then
+              echo "result=success" >> "$GITHUB_OUTPUT"
+              echo "Embed job succeeded."
+              exit 0
+            elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Stopped" ]; then
+              echo "result=failed" >> "$GITHUB_OUTPUT"
+              echo "ERROR: embed job ended with status $STATUS"
+              exit 1
+            fi
+            sleep $INTERVAL
+          done
+
+          echo "result=failed" >> "$GITHUB_OUTPUT"
+          echo "ERROR: embed job timed out after ${MAX_WAIT} minutes"
+          exit 1
+
+  # ── 3. HARMONISE ────────────────────────────────────────────────────────────
+  harmonise:
+    name: Harmonise
+    needs: embed
+    if: ${{ github.event.inputs.skip_harmonise != 'true' }}
+    runs-on: ubuntu-latest
+    outputs:
+      result: ${{ steps.run.outputs.result }}
+
+    steps:
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Run harmonise job
+        id: run
+        run: |
+          RG="${{ env.AZURE_RESOURCE_GROUP }}"
+          JOB="tdo-job-harmonise-dev"
+          MAX_WAIT=60
+          INTERVAL=60
+          MAX_ATTEMPTS=$(( MAX_WAIT * 60 / INTERVAL ))
+
+          echo "Starting harmonise job…"
+          EXEC_NAME=$(az containerapp job start \
+            --name "$JOB" \
+            --resource-group "$RG" \
+            --output json 2>/dev/null | jq -r '.name // empty')
+
+          if [ -z "$EXEC_NAME" ]; then
+            echo "ERROR: failed to start harmonise job"
+            echo "result=failed" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          echo "Execution: $EXEC_NAME — polling every ${INTERVAL}s (max ${MAX_WAIT}m)"
+          attempts=0
+          while [ $attempts -lt $MAX_ATTEMPTS ]; do
+            attempts=$(( attempts + 1 ))
+            STATUS=$(az containerapp job execution show \
+              --name "$JOB" \
+              --resource-group "$RG" \
+              --job-execution-name "$EXEC_NAME" \
+              --query "properties.status" -o tsv 2>/dev/null)
+            echo "  [${attempts}/${MAX_ATTEMPTS}] $EXEC_NAME → $STATUS"
+            if [ "$STATUS" = "Succeeded" ]; then
+              echo "result=success" >> "$GITHUB_OUTPUT"
+              echo "Harmonise job succeeded."
+              exit 0
+            elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Stopped" ]; then
+              echo "result=failed" >> "$GITHUB_OUTPUT"
+              echo "ERROR: harmonise job ended with status $STATUS"
+              exit 1
+            fi
+            sleep $INTERVAL
+          done
+
+          echo "result=failed" >> "$GITHUB_OUTPUT"
+          echo "ERROR: harmonise job timed out after ${MAX_WAIT} minutes"
+          exit 1
+
+  # ── 4. SUMMARY ──────────────────────────────────────────────────────────────
+  summary:
+    name: Summary
+    needs: [harvest, embed, harmonise]
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Fetch health and record counts
+        run: |
+          APP_URL=$(az containerapp show \
+            --name tdo-app-api-dev \
+            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+            --query "properties.configuration.ingress.fqdn" -o tsv 2>/dev/null)
+
+          echo "════════════════════════════════════════════════"
+          echo "  TDO Nightly Pipeline — Summary"
+          echo "  $(date -u '+%Y-%m-%d %H:%M UTC')"
+          echo "════════════════════════════════════════════════"
+
+          if [ -n "$APP_URL" ]; then
+            HEALTH=$(curl -sf "https://${APP_URL}/v1/health" 2>/dev/null || echo '{}')
+            echo ""
+            echo "API endpoint: https://${APP_URL}"
+            echo "API status:   $(echo "$HEALTH" | jq -r '.status // "unreachable"')"
+            echo ""
+            echo "Record counts by portal:"
+            echo "$HEALTH" | jq -r '
+              .portals // {} | to_entries[] |
+              "  \(.key): \(.value.records // 0) records"
+            ' 2>/dev/null || echo "  (could not parse portal counts)"
+          else
+            echo "WARNING: could not resolve API URL"
+          fi
+
+      - name: Print job results
+        run: |
+          echo ""
+          echo "Job results:"
+          echo "  harvest:   ${{ needs.harvest.outputs.result || needs.harvest.result }}"
+          echo "  embed:     ${{ needs.embed.outputs.result   || needs.embed.result }}"
+          echo "  harmonise: ${{ needs.harmonise.outputs.result || needs.harmonise.result }}"
+
+      - name: Fail if harvest did not succeed
+        if: needs.harvest.result != 'success'
+        run: |
+          echo "ERROR: harvest job did not succeed (result: ${{ needs.harvest.result }})"
+          exit 1
