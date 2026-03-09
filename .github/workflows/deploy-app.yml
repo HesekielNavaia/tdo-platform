@@ -119,6 +119,13 @@ jobs:
       - name: Update harvest job template image
         run: |
           SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-8)
+          # Configure ACR registry credentials on job first (required to pull private image)
+          az containerapp job registry set \
+            --name tdo-job-harvest-dev \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --server tdoacrdev.azurecr.io \
+            --username ${{ secrets.ACR_USERNAME }} \
+            --password ${{ secrets.ACR_PASSWORD }} || true
           az containerapp job update \
             --name tdo-job-harvest-dev \
             --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
