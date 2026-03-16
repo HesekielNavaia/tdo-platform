@@ -12,7 +12,7 @@ from __future__ import annotations
 from alembic import op
 
 revision = "0012_fix_statfin_eurostat_oecd_urls"
-down_revision = "0011_fix_worldbank_url"
+down_revision = "0012z_alembic_fix"
 branch_labels = None
 depends_on = None
 

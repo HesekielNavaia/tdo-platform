@@ -41,7 +41,7 @@ jobs:
 
     steps:
       - name: Azure Login (OIDC)
-        uses: azure/login@v2
+        uses: azure/login@v2.3.0
         with:
           client-id: ${{ env.AZURE_CLIENT_ID }}
           tenant-id: ${{ env.AZURE_TENANT_ID }}
@@ -65,7 +65,7 @@ jobs:
         run: |
           RG="${{ env.AZURE_RESOURCE_GROUP }}"
           JOB="tdo-job-harvest-dev"
-          MAX_WAIT=60   # minutes
+          MAX_WAIT=120  # minutes — statfin alone takes ~60m for harvest+embed
           INTERVAL=60   # seconds
           MAX_ATTEMPTS=$(( MAX_WAIT * 60 / INTERVAL ))
 
@@ -96,10 +96,16 @@ jobs:
           for PORTAL in $PORTALS; do
             echo "──────────────────────────────────────────"
             echo "Starting harvest for portal: $PORTAL"
+            # az containerapp job start --env-vars does not propagate to the container;
+            # update the job template PORTAL_ID first, then start.
+            az containerapp job update \
+              --name "$JOB" \
+              --resource-group "$RG" \
+              --set-env-vars "JOB_NAME=harvest" "PORTAL_ID=$PORTAL" \
+              --output none 2>/dev/null
             EXEC_NAME=$(az containerapp job start \
               --name "$JOB" \
               --resource-group "$RG" \
-              --env-vars "PORTAL_ID=$PORTAL" \
               --output json 2>/dev/null | jq -r '.name // empty')
 
             if [ -z "$EXEC_NAME" ]; then
@@ -133,7 +139,7 @@ jobs:
 
     steps:
       - name: Azure Login (OIDC)
-        uses: azure/login@v2
+        uses: azure/login@v2.3.0
         with:
           client-id: ${{ env.AZURE_CLIENT_ID }}
           tenant-id: ${{ env.AZURE_TENANT_ID }}
@@ -197,7 +203,7 @@ jobs:
 
     steps:
       - name: Azure Login (OIDC)
-        uses: azure/login@v2
+        uses: azure/login@v2.3.0
         with:
           client-id: ${{ env.AZURE_CLIENT_ID }}
           tenant-id: ${{ env.AZURE_TENANT_ID }}
@@ -259,7 +265,7 @@ jobs:
 
     steps:
       - name: Azure Login (OIDC)
-        uses: azure/login@v2
+        uses: azure/login@v2.3.0
         with:
           client-id: ${{ env.AZURE_CLIENT_ID }}
           tenant-id: ${{ env.AZURE_TENANT_ID }}

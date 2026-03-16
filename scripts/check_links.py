@@ -6,7 +6,7 @@ Usage:
     python3 scripts/check_links.py \\
         --api https://tdo-app-api-dev.mangocliff-4ea581ad.northeurope.azurecontainerapps.io \\
         --apikey tdo-dev-key-63ac09ac2414579c6e5a22d08c86f963 \\
-        [--portal worldbank] [--limit 100] [--verbose]
+        [--portal worldbank] [--limit 200] [--verbose] [--sample]
 """
 
 import argparse
@@ -14,23 +14,56 @@ import json
 import re
 import sys
 import time
+import urllib.parse
 import urllib.request
 import urllib.error
+import datetime
 
 SEARCH_QUERIES = [
     "GDP growth", "population", "inflation", "unemployment",
     "trade", "energy", "health", "education", "poverty", "emissions",
+    "housing", "climate", "agriculture", "finance", "industry",
 ]
 PORTALS = ["statfin", "eurostat", "oecd", "worldbank", "undata"]
-TIMEOUT = 15
+TIMEOUT = 20
 CONTENT_CHECK_PORTALS = {"worldbank", "oecd", "undata"}
 ERROR_PHRASES = [
     "no longer available",
     "not found",
     "does not exist",
+    "no data available",
     "discontinued",
 ]
+# Patterns that indicate a generic portal homepage (not a specific dataset)
+HOMEPAGE_PATH_PATTERNS = [
+    re.compile(r"^https?://[^/]+/?$"),                          # bare domain
+    re.compile(r"^https://unstats\.un\.org/sdgs/?$"),           # UN SDG root
+    re.compile(r"^https://data\.worldbank\.org/?$"),            # WB root
+    re.compile(r"^https://databank\.worldbank\.org/?$"),        # WB databank root
+    re.compile(r"^https://ec\.europa\.eu/eurostat/?$"),         # Eurostat root
+]
+# WorldBank numeric-only indicator code (these are source IDs, not indicator codes)
+WB_NUMERIC_PATTERN = re.compile(r"^https://data\.worldbank\.org/indicator/[0-9]+$")
 USER_AGENT = "TDO-LinkChecker/1.0"
+
+
+# ── Domain rate limiting ──────────────────────────────────────────────────────
+
+_last_request_by_domain = {}
+
+
+def _domain(url):
+    return urllib.parse.urlparse(url).netloc
+
+
+def _rate_limit(url, delay=0.5):
+    domain = _domain(url)
+    now = time.time()
+    last = _last_request_by_domain.get(domain, 0)
+    gap = delay - (now - last)
+    if gap > 0:
+        time.sleep(gap)
+    _last_request_by_domain[domain] = time.time()
 
 
 # ── API helpers ───────────────────────────────────────────────────────────────
@@ -47,7 +80,7 @@ def api_post(api_base, path, payload, apikey):
         },
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=15) as resp:
+    with urllib.request.urlopen(req, timeout=20) as resp:
         return json.loads(resp.read())
 
 
@@ -57,13 +90,14 @@ def api_get(api_base, path, apikey):
         url,
         headers={"X-API-Key": apikey, "User-Agent": USER_AGENT},
     )
-    with urllib.request.urlopen(req, timeout=15) as resp:
+    with urllib.request.urlopen(req, timeout=20) as resp:
         return json.loads(resp.read())
 
 
 # ── URL fetching ──────────────────────────────────────────────────────────────
 
 def fetch_url(url, read_body=False):
+    _rate_limit(url)
     req = urllib.request.Request(
         url,
         headers={"User-Agent": USER_AGENT},
@@ -71,17 +105,20 @@ def fetch_url(url, read_body=False):
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
             status = resp.status
+            final_url = resp.url if hasattr(resp, "url") else url
             body = None
             if read_body:
-                body = resp.read(8192).decode("utf-8", errors="ignore").lower()
-            return status, body
+                body = resp.read(4096).decode("utf-8", errors="ignore").lower()
+            return status, final_url, body
     except urllib.error.HTTPError as e:
-        return e.code, None
+        return e.code, url, None
     except Exception as e:
         raise ConnectionError(str(e))
 
 
 def check_content_errors(body):
+    if not body:
+        return None
     found = []
     for phrase in ERROR_PHRASES:
         if phrase in body:
@@ -89,60 +126,104 @@ def check_content_errors(body):
     return found or None
 
 
+def is_homepage_url(url):
+    for pattern in HOMEPAGE_PATH_PATTERNS:
+        if pattern.match(url):
+            return True
+    return False
+
+
 # ── URL collection ─────────────────────────────────────────────────────────────
 
-def collect_urls(api_base, apikey, portal_filter, limit):
+def extract_record_fields(r):
+    rec = r.get("record", r)
+    portal = (
+        rec.get("source_portal")
+        or rec.get("portal_id")
+        or r.get("portal")
+        or r.get("source_portal")
+        or "unknown"
+    )
+    url = rec.get("dataset_url") or r.get("dataset_url") or r.get("url") or ""
+    title = rec.get("title") or r.get("title") or "(no title)"
+    return portal, url, title
+
+
+def collect_urls(api_base, apikey, portal_filter, limit, do_sample):
     seen_urls = set()
     records = []
 
     print("Collecting dataset URLs via /v1/query ...")
 
+    portals_to_check = [portal_filter] if portal_filter else PORTALS
+
     for query in SEARCH_QUERIES:
         if len(records) >= limit:
             break
-        payload = {"question": query, "limit": 10}
+        payload = {"question": query, "limit": 20}
         if portal_filter:
             payload["portal"] = portal_filter
         try:
             data = api_post(api_base, "/v1/query", payload, apikey)
             for r in data.get("results", []):
-                url = r.get("dataset_url") or r.get("url", "")
+                portal, url, title = extract_record_fields(r)
                 if not url or url in seen_urls:
                     continue
+                if portal_filter and portal != portal_filter:
+                    continue
                 seen_urls.add(url)
-                records.append({
-                    "portal": r.get("portal") or r.get("source_portal", "unknown"),
-                    "title":  r.get("title", "(no title)")[:80],
-                    "url":    url,
-                })
+                records.append({"portal": portal, "title": title[:80], "url": url})
         except Exception as e:
             print("  [!] Query '{}' failed: {}".format(query, e))
 
-    # Top-up: one request per portal to ensure coverage
-    for portal in (PORTALS if not portal_filter else [portal_filter]):
+    # Ensure each portal has coverage via datasets endpoint
+    for portal in portals_to_check:
         if len(records) >= limit:
             break
         try:
-            data = api_post(
-                api_base, "/v1/query",
-                {"question": "statistics data", "portal": portal, "limit": 10},
+            data = api_get(
+                api_base,
+                "/v1/datasets?portal={}&limit=30".format(portal),
                 apikey,
             )
             for r in data.get("results", []):
-                url = r.get("dataset_url") or r.get("url", "")
+                portal_val, url, title = extract_record_fields(r)
                 if not url or url in seen_urls:
                     continue
                 seen_urls.add(url)
-                records.append({
-                    "portal": r.get("portal") or r.get("source_portal", portal),
-                    "title":  r.get("title", "(no title)")[:80],
-                    "url":    url,
-                })
-        except Exception:
-            pass
+                records.append({"portal": portal_val or portal, "title": title[:80], "url": url})
+        except Exception as e:
+            print("  [!] Portal top-up for {} failed: {}".format(portal, e))
+
+    # --sample: pull 50 random records per portal via datasets endpoint
+    if do_sample:
+        print("  Pulling sample records per portal ...")
+        for portal in portals_to_check:
+            offset = 50  # skip the first page to get diversity
+            try:
+                data = api_get(
+                    api_base,
+                    "/v1/datasets?portal={}&limit=50&offset={}".format(portal, offset),
+                    apikey,
+                )
+                added = 0
+                for r in data.get("results", []):
+                    portal_val, url, title = extract_record_fields(r)
+                    if not url or url in seen_urls:
+                        continue
+                    seen_urls.add(url)
+                    records.append({
+                        "portal": portal_val or portal,
+                        "title": title[:80],
+                        "url": url,
+                    })
+                    added += 1
+                print("    {} +{} sample records".format(portal, added))
+            except Exception as e:
+                print("  [!] Sample for {} failed: {}".format(portal, e))
 
     print("  Collected {} unique URLs\n".format(len(records)))
-    return records[:limit]
+    return records[:limit] if limit else records
 
 
 # ── Link checking ─────────────────────────────────────────────────────────────
@@ -153,12 +234,18 @@ def is_ok(r):
         and 200 <= r["http_status"] < 400
         and r["content_errors"] is None
         and r["error"] is None
+        and not r.get("numeric_wb_id", False)
+        and not r.get("is_homepage", False)
     )
 
 
 def result_label(r):
+    if r.get("numeric_wb_id"):
+        return "BROKEN (WorldBank numeric-only indicator code)"
+    if r.get("is_homepage"):
+        return "BROKEN (final URL is portal homepage/root)"
     if r["error"]:
-        return "ERROR ({})".format(r["error"][:50])
+        return "ERROR ({})".format(r["error"][:60])
     if r["http_status"] and r["http_status"] >= 400:
         return "HTTP {}".format(r["http_status"])
     if r["content_errors"]:
@@ -179,21 +266,36 @@ def check_links(records, verbose):
             "title":          rec["title"],
             "url":            url,
             "http_status":    None,
+            "final_url":      url,
             "error":          None,
             "content_errors": None,
+            "numeric_wb_id":  False,
+            "is_homepage":    False,
         }
 
         if verbose:
             print("[{:3}/{}] {:12} {}".format(i, total, portal, url[:80]))
+
+        # WorldBank numeric indicator code: flag without HTTP request
+        if WB_NUMERIC_PATTERN.match(url):
+            r["numeric_wb_id"] = True
+            if verbose:
+                print("             => {}".format(result_label(r)))
+            results.append(r)
+            continue
 
         if not url.startswith("http"):
             r["error"] = "not a valid URL"
         else:
             try:
                 read_body = portal in CONTENT_CHECK_PORTALS
-                status, body = fetch_url(url, read_body=read_body)
+                status, final_url, body = fetch_url(url, read_body=read_body)
                 r["http_status"] = status
-                if body:
+                r["final_url"] = final_url
+                # Check if we landed on a homepage
+                if is_homepage_url(final_url):
+                    r["is_homepage"] = True
+                elif body:
                     r["content_errors"] = check_content_errors(body)
             except ConnectionError as e:
                 r["error"] = str(e)[:80]
@@ -202,7 +304,6 @@ def check_links(records, verbose):
             print("             => {}".format(result_label(r)))
 
         results.append(r)
-        time.sleep(0.25)
 
     return results
 
@@ -219,18 +320,22 @@ def print_report(results):
     print("  TDO LINK CHECK REPORT")
     print("=" * 72)
     print("  Total  : {}".format(total))
-    print("  OK     : {}  ({:.0f}%)".format(len(ok),     100 * len(ok)     / max(total, 1)))
+    print("  OK     : {}  ({:.0f}%)".format(len(ok), 100 * len(ok) / max(total, 1)))
     print("  Broken : {}  ({:.0f}%)".format(len(broken), 100 * len(broken) / max(total, 1)))
     print()
-    print("  {:<14} {:>6} {:>8} {:>7}".format("Portal", "OK", "Broken", "Total"))
-    print("  " + "-" * 40)
+    print("  {:<14} {:>6} {:>8} {:>7}  {:>6}".format("Portal", "OK", "Broken", "Total", "% OK"))
+    print("  " + "-" * 48)
+
+    summary_parts = []
     for portal in PORTALS + ["unknown"]:
         pr = [r for r in results if r["portal"] == portal]
         if not pr:
             continue
         pok = sum(1 for r in pr if is_ok(r))
-        print("  {:<14} {:>6} {:>8} {:>7}".format(
-            portal, pok, len(pr) - pok, len(pr)))
+        pct = 100 * pok // len(pr)
+        print("  {:<14} {:>6} {:>8} {:>7}  {:>5}%".format(
+            portal, pok, len(pr) - pok, len(pr), pct))
+        summary_parts.append("{} {}/{}".format(portal, pok, len(pr)))
 
     if broken:
         print()
@@ -238,17 +343,20 @@ def print_report(results):
         print("  " + "-" * 72)
         for r in broken:
             url_short = r["url"]
-            if len(url_short) > 68:
-                url_short = url_short[:65] + "..."
+            if len(url_short) > 70:
+                url_short = url_short[:67] + "..."
             print("  [{:<10}] {}".format(r["portal"], result_label(r)))
             print("    URL  : {}".format(url_short))
-            print("    Title: {}".format(r["title"]))
+            print("    Title: {}".format(r["title"][:70]))
             print()
     else:
         print()
         print("  All links are healthy.")
 
     print("=" * 72)
+    print()
+    print("LINKS: " + " | ".join("{} OK".format(s) for s in summary_parts))
+
     return 1 if broken else 0
 
 
@@ -266,14 +374,33 @@ def main():
                         help="Max URLs to check (default: 100)")
     parser.add_argument("--verbose", "-v", action="store_true",
                         help="Print each URL and result as it is checked")
+    parser.add_argument("--sample",  action="store_true",
+                        help="Also pull 50 random records per portal for broader coverage")
     args = parser.parse_args()
 
-    records = collect_urls(args.api, args.apikey, args.portal, args.limit)
+    records = collect_urls(args.api, args.apikey, args.portal, args.limit, args.sample)
     if not records:
         print("No records returned. Check --api and --apikey.")
         sys.exit(1)
 
-    results   = check_links(records, args.verbose)
+    results = check_links(records, args.verbose)
+
+    # Save full results JSON
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_path = "check_links_results_{}.json".format(ts)
+    try:
+        with open(out_path, "w") as f:
+            json.dump({
+                "timestamp": ts,
+                "total": len(results),
+                "ok": sum(1 for r in results if is_ok(r)),
+                "broken": sum(1 for r in results if not is_ok(r)),
+                "results": results,
+            }, f, indent=2)
+        print("Full results saved to: {}".format(out_path))
+    except Exception as e:
+        print("  [!] Could not save results: {}".format(e))
+
     exit_code = print_report(results)
     sys.exit(exit_code)
 

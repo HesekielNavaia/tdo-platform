@@ -81,7 +81,7 @@ jobs:
     environment: dev
     steps:
       - name: Azure Login (OIDC)
-        uses: azure/login@v2
+        uses: azure/login@v2.3.0
         with:
           client-id: ${{ env.AZURE_CLIENT_ID }}
           tenant-id: ${{ env.AZURE_TENANT_ID }}
@@ -129,7 +129,8 @@ jobs:
           az containerapp job update \
             --name tdo-job-harvest-dev \
             --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
-            --image ${{ env.ACR_IMAGE }}:${SHORT_SHA} || true
+            --image ${{ env.ACR_IMAGE }}:${SHORT_SHA} \
+            --set-env-vars "JOB_NAME=harvest" || true
 
       - name: Smoke test
         run: |

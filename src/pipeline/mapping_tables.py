@@ -486,6 +486,7 @@ WORLDBANK_TO_MVM: dict[str, tuple[str, Callable | None]] = {
 
     # --- URL ---
     "url":                                  ("dataset_url",         _strip),
+    "_dataset_url":                         ("dataset_url",         _strip),
     "_source_portal":                       ("source_portal",       _strip),
 
     # --- Language ---

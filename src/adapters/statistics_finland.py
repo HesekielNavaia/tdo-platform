@@ -17,7 +17,7 @@ log = structlog.get_logger(__name__)
 
 STATFIN_API_BASE  = "https://pxdata.stat.fi/PXWeb/api/v1/en"
 STATFIN_BASE_URL  = f"{STATFIN_API_BASE}/StatFin"   # start traversal here
-STATFIN_VIEW_BASE = "https://pxdata.stat.fi/PXWeb/pxweb/en/StatFin"
+STATFIN_VIEW_BASE = "https://pxdata.stat.fi/PxWeb/pxweb/en/StatFin"
 
 
 class StatisticsFinlandAdapter(BasePortalAdapter):

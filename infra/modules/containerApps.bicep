@@ -65,7 +65,7 @@ param identityApiId string
 param identityApiClientId string
 
 @description('Use placeholder image for initial deployment before ACR images are pushed. Set to false after deploy-app has pushed real images.')
-param initialDeploy bool = true
+param initialDeploy bool = false
 
 // ── Variables ─────────────────────────────────────────────────────────────────
 
@@ -143,11 +143,10 @@ resource jobHarvest 'Microsoft.App/jobs@2024-03-01' = {
     environmentId: containerAppsEnv.id
     workloadProfileName: 'Consumption'
     configuration: {
-      triggerType: 'Schedule'
-      replicaTimeout: 3600
-      replicaRetryLimit: 3
-      scheduleTriggerConfig: {
-        cronExpression: '0 2 * * *'
+      triggerType: 'Manual'
+      replicaTimeout: 7200
+      replicaRetryLimit: 0
+      manualTriggerConfig: {
         parallelism: 1
         replicaCompletionCount: 1
       }
@@ -175,6 +174,10 @@ resource jobHarvest 'Microsoft.App/jobs@2024-03-01' = {
             {
               name: 'JOB_NAME'
               value: 'harvest'
+            }
+            {
+              name: 'PORTAL_ID'
+              value: ''
             }
           ])
         }
