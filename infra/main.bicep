@@ -46,7 +46,7 @@ param postgresSkuName string = 'Standard_B1ms'
 param postgresSkuTier string = 'Burstable'
 
 @description('Use placeholder container image for initial deployment before ACR images are pushed. Set to false after deploy-app has run.')
-param initialDeploy bool = true
+param initialDeploy bool = false
 
 @description('Apply PostgreSQL server parameter configurations. Set to false on re-deployments to avoid ServerIsBusy errors on an existing server.')
 param postgresApplyServerConfig bool = true

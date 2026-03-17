@@ -59,7 +59,8 @@ jobs:
             --template-file infra/main.bicep \
             --parameters infra/parameters/dev.bicepparam \
             --parameters tenantId=${{ env.AZURE_TENANT_ID }} \
-            --parameters administratorObjectId=${{ env.ADMIN_OBJECT_ID }}
+            --parameters administratorObjectId=${{ env.ADMIN_OBJECT_ID }} \
+            --parameters initialDeploy=false
 
   deploy-dev:
     name: Deploy to Dev
@@ -83,7 +84,8 @@ jobs:
             --parameters infra/parameters/dev.bicepparam \
             --parameters tenantId=${{ env.AZURE_TENANT_ID }} \
             --parameters administratorObjectId=${{ env.ADMIN_OBJECT_ID }} \
-            --parameters environment=dev
+            --parameters environment=dev \
+            --parameters initialDeploy=false
 
   deploy-staging:
     name: Deploy to Staging
@@ -107,7 +109,8 @@ jobs:
             --parameters infra/parameters/dev.bicepparam \
             --parameters tenantId=${{ env.AZURE_TENANT_ID }} \
             --parameters administratorObjectId=${{ env.ADMIN_OBJECT_ID }} \
-            --parameters environment=staging
+            --parameters environment=staging \
+            --parameters initialDeploy=false
 
   deploy-prod:
     name: Deploy to Production
@@ -131,4 +134,5 @@ jobs:
             --parameters infra/parameters/dev.bicepparam \
             --parameters tenantId=${{ env.AZURE_TENANT_ID }} \
             --parameters administratorObjectId=${{ env.ADMIN_OBJECT_ID }} \
-            --parameters environment=prod
+            --parameters environment=prod \
+            --parameters initialDeploy=false
