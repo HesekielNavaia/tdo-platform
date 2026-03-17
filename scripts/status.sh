@@ -273,7 +273,6 @@ show_workflow_runs "deploy-infra.yml"
 hdr "KNOWN OPEN ISSUES"
 # ─────────────────────────────────────────────────────────────────────────────
 
-warn "tdo-job-embed-dev + tdo-job-harmonise-dev use placeholder helloworld image (not wired)"
 warn "GitHub env 'dev' secrets (TDO_API_KEYS, EMBEDDER_ENDPOINT, EMBEDDER_KEY) must exist for CI/CD secret-restore step"
 warn "Harmoniser not_configured in prod — records indexed with rule-based mapping only"
 warn "PostgreSQL + Key Vault on private endpoints — no direct local access"
