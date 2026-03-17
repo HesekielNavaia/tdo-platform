@@ -293,14 +293,14 @@ Exact working URL patterns stored in the `dataset_url` column:
 | Portal | URL pattern | Example |
 |---|---|---|
 | **Eurostat** | `https://ec.europa.eu/eurostat/databrowser/explore/all/all_themes?lang=en&display=list&sort=category&extractionId={ID}` | `extractionId=NAMQ_10_GDP` |
-| **OECD** | `https://data-explorer.oecd.org/vis?df[ds]=dsDisseminateFinalDMZ&df[id]=DF_{ID}&df[ag]=OECD` | `df[id]=DF_NAAG` |
+| **OECD** | `https://data-explorer.oecd.org/vis?df[ds]=dsDisseminateFinalDMZ&df[id]=DF_{ID}&df[ag]={AGENCY}` | `df[id]=DF_QNA&df[ag]=OECD.SDD.NAD` |
 | **StatFin** | `https://pxdata.stat.fi/PXWeb/pxweb/en/StatFin/StatFin__{folder}/{table}.px` | `StatFin__jyev/statfin_jyev_pxt_12sy.px` |
 | **World Bank** | `https://databank.worldbank.org/source/{ID}` | `source/38` |
 | **UN Data** | `https://unstats.un.org/sdgs/indicators/database/?indicator={ID}` | `indicator=1.1.1` |
 
 Key fixes in git history:
 - **StatFin**: PxWeb viewer requires uppercase `/PXWeb/` and `{db}__{folder}` double-underscore format — lowercase `/PxWeb/` or missing double-underscore returns HTTP 500
-- **OECD**: must use `data-explorer.oecd.org` (new) not old SDMX URLs; `df[id]` must include `DF_` prefix
+- **OECD**: `df[ag]` must be the real SDMX sub-directorate agency (e.g. `OECD.SDD.NAD`, `OECD.CFE.EDS`) — bare `OECD` causes "no data available". `df[id]` is the part after `@` in compound IDs (`DSD_NASU@DF_VALUATION_T1620` → `DF_VALUATION_T1620`). The adapter reads real agencyID from `sdmx.oecd.org/public/rest/dataflow/all/all/latest?detail=allstubs` — re-run harvest to fix any records with wrong agency.
 - **World Bank**: must use `databank.worldbank.org/source/{id}` not `data.worldbank.org/source/{id}`
 - **Eurostat**: must use `extractionId=` query param format, not `/databrowser/view/{id}` (old path gives generic explore page)
 
