@@ -27,13 +27,22 @@ SEARCH_QUERIES = [
 PORTALS = ["statfin", "eurostat", "oecd", "worldbank", "undata"]
 TIMEOUT = 20
 CONTENT_CHECK_PORTALS = {"worldbank", "oecd", "undata"}
+# Domains that are JavaScript SPAs — their static HTML shell contains error phrases
+# as boilerplate/fallback text, causing false positives if we content-check them.
+NO_CONTENT_CHECK_DOMAINS = {"databank.worldbank.org"}
 ERROR_PHRASES = [
     "no longer available",
     "not found",
     "does not exist",
     "no data available",
     "discontinued",
+    "there is no data",
 ]
+# HTTP status codes treated as transient server errors (not our URL's fault).
+# 500 = Internal Server Error (server crash, not missing resource — 404 = truly missing).
+# 502/503/504 = Gateway/Unavailable/Timeout (infrastructure issues).
+TRANSIENT_STATUSES = {500, 502, 503, 504}
+
 # Patterns that indicate a generic portal homepage (not a specific dataset)
 HOMEPAGE_PATH_PATTERNS = [
     re.compile(r"^https?://[^/]+/?$"),                          # bare domain
@@ -236,7 +245,13 @@ def is_ok(r):
         and r["error"] is None
         and not r.get("numeric_wb_id", False)
         and not r.get("is_homepage", False)
+        and not r.get("transient", False)
+        and not r.get("inconclusive", False)
     )
+
+
+def is_transient_or_inconclusive(r):
+    return r.get("transient", False) or r.get("inconclusive", False)
 
 
 def result_label(r):
@@ -244,8 +259,12 @@ def result_label(r):
         return "BROKEN (WorldBank numeric-only indicator code)"
     if r.get("is_homepage"):
         return "BROKEN (final URL is portal homepage/root)"
+    if r.get("transient"):
+        return "TRANSIENT HTTP {} (server-side gateway error — URL is valid)".format(r["http_status"])
+    if r.get("inconclusive"):
+        return "INCONCLUSIVE (connection error — host may be unreachable from this network)"
     if r["error"]:
-        return "ERROR ({})".format(r["error"][:60])
+        return "BROKEN ({})".format(r["error"][:60])
     if r["http_status"] and r["http_status"] >= 400:
         return "HTTP {}".format(r["http_status"])
     if r["content_errors"]:
@@ -271,6 +290,8 @@ def check_links(records, verbose):
             "content_errors": None,
             "numeric_wb_id":  False,
             "is_homepage":    False,
+            "transient":      False,
+            "inconclusive":   False,
         }
 
         if verbose:
@@ -288,17 +309,23 @@ def check_links(records, verbose):
             r["error"] = "not a valid URL"
         else:
             try:
-                read_body = portal in CONTENT_CHECK_PORTALS
+                domain = _domain(url)
+                read_body = (
+                    portal in CONTENT_CHECK_PORTALS
+                    and domain not in NO_CONTENT_CHECK_DOMAINS
+                )
                 status, final_url, body = fetch_url(url, read_body=read_body)
                 r["http_status"] = status
                 r["final_url"] = final_url
-                # Check if we landed on a homepage
-                if is_homepage_url(final_url):
+                if status in TRANSIENT_STATUSES:
+                    r["transient"] = True
+                elif is_homepage_url(final_url):
                     r["is_homepage"] = True
                 elif body:
                     r["content_errors"] = check_content_errors(body)
             except ConnectionError as e:
                 r["error"] = str(e)[:80]
+                r["inconclusive"] = True
 
         if verbose:
             print("             => {}".format(result_label(r)))
@@ -311,30 +338,38 @@ def check_links(records, verbose):
 # ── Report ────────────────────────────────────────────────────────────────────
 
 def print_report(results):
-    ok     = [r for r in results if is_ok(r)]
-    broken = [r for r in results if not is_ok(r)]
-    total  = len(results)
+    ok           = [r for r in results if is_ok(r)]
+    broken       = [r for r in results if not is_ok(r) and not is_transient_or_inconclusive(r)]
+    transient    = [r for r in results if r.get("transient")]
+    inconclusive = [r for r in results if r.get("inconclusive")]
+    total        = len(results)
 
     print()
     print("=" * 72)
     print("  TDO LINK CHECK REPORT")
     print("=" * 72)
-    print("  Total  : {}".format(total))
-    print("  OK     : {}  ({:.0f}%)".format(len(ok), 100 * len(ok) / max(total, 1)))
-    print("  Broken : {}  ({:.0f}%)".format(len(broken), 100 * len(broken) / max(total, 1)))
+    print("  Total        : {}".format(total))
+    print("  OK           : {}  ({:.0f}%)".format(len(ok), 100 * len(ok) / max(total, 1)))
+    print("  Broken       : {}  ({:.0f}%)".format(len(broken), 100 * len(broken) / max(total, 1)))
+    print("  Transient    : {}  (5xx gateway errors — server-side, URL is valid)".format(len(transient)))
+    print("  Inconclusive : {}  (connection errors — host may be unreachable from here)".format(len(inconclusive)))
     print()
-    print("  {:<14} {:>6} {:>8} {:>7}  {:>6}".format("Portal", "OK", "Broken", "Total", "% OK"))
-    print("  " + "-" * 48)
+    print("  {:<14} {:>5} {:>7} {:>7} {:>7}  {:>6}".format(
+        "Portal", "OK", "Broken", "Trans.", "Incon.", "% OK"))
+    print("  " + "-" * 56)
 
     summary_parts = []
     for portal in PORTALS + ["unknown"]:
         pr = [r for r in results if r["portal"] == portal]
         if not pr:
             continue
-        pok = sum(1 for r in pr if is_ok(r))
-        pct = 100 * pok // len(pr)
-        print("  {:<14} {:>6} {:>8} {:>7}  {:>5}%".format(
-            portal, pok, len(pr) - pok, len(pr), pct))
+        pok   = sum(1 for r in pr if is_ok(r))
+        pbad  = sum(1 for r in pr if not is_ok(r) and not is_transient_or_inconclusive(r))
+        ptran = sum(1 for r in pr if r.get("transient"))
+        pinc  = sum(1 for r in pr if r.get("inconclusive"))
+        pct   = 100 * pok // len(pr)
+        print("  {:<14} {:>5} {:>7} {:>7} {:>7}  {:>5}%".format(
+            portal, pok, pbad, ptran, pinc, pct))
         summary_parts.append("{} {}/{}".format(portal, pok, len(pr)))
 
     if broken:
@@ -351,7 +386,22 @@ def print_report(results):
             print()
     else:
         print()
-        print("  All links are healthy.")
+        print("  All definitive checks are healthy.")
+
+    if transient:
+        print()
+        print("  TRANSIENT (server-side errors, not our fault) — {}".format(len(transient)))
+        print("  " + "-" * 72)
+        for r in transient:
+            print("  [{:<10}] HTTP {}  {}".format(
+                r["portal"], r["http_status"], r["url"][:65]))
+
+    if inconclusive:
+        print()
+        print("  INCONCLUSIVE (connection errors) — {}".format(len(inconclusive)))
+        print("  " + "-" * 72)
+        for r in inconclusive:
+            print("  [{:<10}] {}".format(r["portal"], r["url"][:65]))
 
     print("=" * 72)
     print()
