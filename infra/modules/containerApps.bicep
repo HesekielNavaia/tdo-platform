@@ -250,6 +250,7 @@ resource jobEmbed 'Microsoft.App/jobs@2024-03-01' = {
     type: 'UserAssigned'
     userAssignedIdentities: {
       '${identityEmbedId}': {}
+      '${identityHarvestId}': {}
     }
   }
   properties: {
@@ -283,7 +284,11 @@ resource jobEmbed 'Microsoft.App/jobs@2024-03-01' = {
           env: concat(commonEnvVars, [
             {
               name: 'AZURE_CLIENT_ID'
-              value: identityEmbedClientId
+              value: identityHarvestClientId
+            }
+            {
+              name: 'POSTGRES_USER'
+              value: 'tdo-id-harvest-dev'
             }
             {
               name: 'JOB_NAME'
