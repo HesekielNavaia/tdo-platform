@@ -82,7 +82,7 @@ ok "Active revision: $ACTIVE_REV"
 
 # Frontend
 FRONTEND_URL=$(az staticwebapp show -n "$FRONTEND_APP" -g "$RG" \
-  --query "properties.defaultHostname" -o tsv 2>/dev/null | tr -d '[:space:]' || true)
+  --query "defaultHostname" -o tsv 2>/dev/null | tr -d '[:space:]' || true)
 if [[ -z "$FRONTEND_URL" ]]; then
   warn "Frontend URL  : could not determine"
 else
