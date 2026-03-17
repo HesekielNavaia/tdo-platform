@@ -96,7 +96,7 @@ VALID_API_KEYS: set[str] = set(
 )
 
 # Endpoints that don't require authentication
-PUBLIC_PATHS = {"/v1/health", "/v1/stats", "/docs", "/redoc", "/openapi.json"}
+PUBLIC_PATHS = {"/v1/health", "/v1/stats", "/docs", "/redoc", "/openapi.json", "/healthz", "/ready"}
 
 
 @app.middleware("http")
@@ -910,6 +910,18 @@ async def _probe_endpoint(url: str, api_key: str | None = None) -> str:
         return "connected" if resp.status_code < 500 else "error"
     except Exception:
         return "error"
+
+
+@app.get("/healthz")
+async def healthz():
+    """Kubernetes-style liveness probe — no auth required."""
+    return {"status": "ok"}
+
+
+@app.get("/ready")
+async def ready():
+    """Kubernetes-style readiness probe — no auth required."""
+    return {"status": "ok"}
 
 
 @app.get("/v1/health")
